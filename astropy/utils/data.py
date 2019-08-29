@@ -37,7 +37,7 @@ __all__ = [
     'CacheMissingWarning', 'get_free_space_in_dir',
     'check_free_space_in_dir', 'download_file',
     'download_files_in_parallel', 'is_url_in_cache', 'get_cached_urls',
-    'export_cache','import_cache', 'check_download_cache',
+    'export_download_cache','import_download_cache', 'check_download_cache',
     ]
 
 _dataurls_to_alias = {}
@@ -1478,7 +1478,7 @@ def get_cached_urls():
 _cache_zip_index_name = "index.json"
 
 
-def export_cache(filename_or_obj, urls=None):
+def export_download_cache(filename_or_obj, urls=None):
     """Exports the cache contents as a ZIP file
 
     Parameters
@@ -1494,7 +1494,7 @@ def export_cache(filename_or_obj, urls=None):
 
     See Also
     --------
-    import_cache : import the contents of such a ZIP file into the cache
+    import_download_cache : import the contents of such a ZIP file into the cache
     """
     if urls is None:
         urls = get_cached_urls()
@@ -1512,7 +1512,7 @@ def export_cache(filename_or_obj, urls=None):
         z.writestr(_cache_zip_index_name, json.dumps(index))
 
 
-def import_cache(filename_or_obj, urls=None):
+def import_download_cache(filename_or_obj, urls=None):
     """Imports the contents of a ZIP file into the cache
 
     The ZIP file must be in the format produced by `export_cache`,
@@ -1530,7 +1530,7 @@ def import_cache(filename_or_obj, urls=None):
 
     See Also
     --------
-    export_cache : export the contents the cache to of such a ZIP file
+    export_download_cache : export the contents the cache to of such a ZIP file
     """
     block_size = 65536
     with zipfile.ZipFile(filename_or_obj, 'r',

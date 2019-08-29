@@ -45,11 +45,11 @@ def preserve_cache(clear=False, check=False):
     """Allow tests to operate without wiping existing cache"""
     from astropy.utils.data import (
             clear_download_cache,
-            export_cache, import_cache,
+            export_download_cache, import_download_cache,
             check_download_cache,
             )
     with NamedTemporaryFile("wb") as zip_file:
-        export_cache(zip_file)
+        export_download_cache(zip_file)
         try:
             if clear:
                 clear_download_cache()
@@ -57,7 +57,7 @@ def preserve_cache(clear=False, check=False):
             if check:
                 check_download_cache(check_hashes=True)
         finally:
-            import_cache(zip_file.name)
+            import_download_cache(zip_file.name)
 
 
 @pytest.mark.remote_data(source='astropy')
@@ -512,7 +512,7 @@ def test_check_download_cache():
     from astropy.utils.data import (
             download_file,
             clear_download_cache,
-            export_cache, import_cache,
+            export_download_cache, import_download_cache,
             check_download_cache,
             )
     with preserve_cache():
@@ -523,11 +523,11 @@ def test_check_download_cache():
             normal = check_download_cache()
             download_file(TESTURL2, cache=True)
             assert check_download_cache() == normal
-            export_cache(zip_file, [TESTURL, TESTURL2])
+            export_download_cache(zip_file, [TESTURL, TESTURL2])
             assert check_download_cache(check_hashes=True) == normal
             clear_download_cache(TESTURL2)
             assert check_download_cache() == normal
-            import_cache(zip_file.name, [TESTURL])
+            import_download_cache(zip_file.name, [TESTURL])
             assert check_download_cache(check_hashes=True) == normal
 
 
@@ -536,16 +536,16 @@ def test_export_import_roundtrip_one():
     from astropy.utils.data import (
             download_file, is_url_in_cache, get_cached_urls,
             clear_download_cache,
-            export_cache, import_cache, check_download_cache,
+            export_download_cache, import_download_cache, check_download_cache,
             )
     with NamedTemporaryFile("wb") as zip_file:
         with open(download_file(TESTURL, cache=True, show_progress=False), "rb") as f:
             contents = f.read()
         normal = check_download_cache()
         initial_urls_in_cache = sorted(get_cached_urls())
-        export_cache(zip_file, [TESTURL])
+        export_download_cache(zip_file, [TESTURL])
         clear_download_cache(TESTURL)
-        import_cache(zip_file.name)
+        import_download_cache(zip_file.name)
         assert is_url_in_cache(TESTURL)
         assert sorted(get_cached_urls()) == initial_urls_in_cache
         with open(download_file(TESTURL, cache=True, show_progress=False), "rb") as f:
@@ -559,11 +559,11 @@ def test_export_with_download():
     from astropy.utils.data import (
             is_url_in_cache,
             clear_download_cache,
-            export_cache,
+            export_download_cache,
             )
     with NamedTemporaryFile("wb") as zip_file:
         clear_download_cache(TESTURL)
-        export_cache(zip_file, [TESTURL])
+        export_download_cache(zip_file, [TESTURL])
         assert is_url_in_cache(TESTURL)
 
 
@@ -572,16 +572,16 @@ def test_import_one():
     from astropy.utils.data import (
             download_file, is_url_in_cache,
             clear_download_cache,
-            export_cache, import_cache,
+            export_download_cache, import_download_cache,
             )
     with NamedTemporaryFile("wb") as zip_file:
         download_file(TESTURL, cache=True)
         download_file(TESTURL2, cache=True)
         assert is_url_in_cache(TESTURL2)
-        export_cache(zip_file, [TESTURL, TESTURL2])
+        export_download_cache(zip_file, [TESTURL, TESTURL2])
         clear_download_cache(TESTURL)
         clear_download_cache(TESTURL2)
-        import_cache(zip_file.name, [TESTURL])
+        import_download_cache(zip_file.name, [TESTURL])
         assert is_url_in_cache(TESTURL)
         assert not is_url_in_cache(TESTURL2)
 
@@ -591,7 +591,7 @@ def test_export_import_roundtrip():
     from astropy.utils.data import (
             download_file, is_url_in_cache, get_cached_urls,
             clear_download_cache,
-            export_cache, import_cache, check_download_cache,
+            export_download_cache, import_download_cache, check_download_cache,
             )
     # No preserve_cache here - if this test fails then preserve_cache
     # is broken, and if it doesn't raise an error the cache is fine.
@@ -600,9 +600,9 @@ def test_export_import_roundtrip():
         download_file(TESTURL2, cache=True)
         normal = check_download_cache()
         initial_urls_in_cache = sorted(get_cached_urls())
-        export_cache(zip_file)
+        export_download_cache(zip_file)
         clear_download_cache()
-        import_cache(zip_file.name)
+        import_download_cache(zip_file.name)
         assert sorted(get_cached_urls()) == initial_urls_in_cache
         assert check_download_cache(check_hashes=True) == normal
 
