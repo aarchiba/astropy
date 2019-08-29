@@ -1362,13 +1362,13 @@ def check_download_cache(check_hashes=False):
 
     This funtion also returns a list of non-indexed files. A few will be
     associated with the shelve object; their exact names depend on the backend
-    used but will probably be based on `urlmap`. The presence of other files,
+    used but will probably be based on ``urlmap``. The presence of other files,
     particularly those that 32-character hex strings or start with those,
     probably indicates that something has gone wrong and inaccessible files
     have accumulated in the cache. These can be removed with
-    ``clear_download_cache(k)`` for a file named 'k' or
-    ``clear_download_cache()`` which should empty the entire
-    cache and return it to a reasonable, if empty, state.
+    `clear_download_cache`, either passking the filename returned here, or
+    with no arguments to  empty the entire cache and return it to a
+    reasonable, if empty, state.
 
     Returns
     -------
@@ -1527,7 +1527,7 @@ def import_cache(filename_or_obj, urls=None):
     """Imports the contents of a ZIP file into the cache
 
     The ZIP file must be in the format produced by `export_cache`,
-    specifically it must have a file `index.json` that is a dictionary
+    specifically it must have a file ``index.json`` that is a dictionary
     mapping URLs to filenames inside the ZIP.
 
     Parameters
