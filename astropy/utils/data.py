@@ -1376,7 +1376,6 @@ def check_download_cache(check_hashes=False):
         This is the set of files in the cache directory that do not correspond
         to known URLs.
     """
-    block_size = 65536
     dldir, urlmapfn = _get_download_cache_locs()
     # We're only reading but without the lock goodness knows what
     # inconsistencies might be detected
@@ -1407,13 +1406,7 @@ def check_download_cache(check_hashes=False):
                                   dldir, u, h)
                     raise ValueError(msg)
                 if check_hashes:
-                    with open(h, "rb") as f:
-                        hash = hashlib.md5()
-                        block = f.read(block_size)
-                        while block:
-                            hash.update(block)
-                            block = f.read(block_size)
-                    hexdigest_file = hash.hexdigest()
+                    hexdigest_file = compute_hash(h)
                     if hexdigest_file != hexdigest:
                         msg = "File corresponding to {} has contents that " +\
                               "do not match the hash value: should be '{}' " +\
@@ -1432,15 +1425,8 @@ def _import_to_cache(url_key, filename,
     # If this fails somehow might as well let the exception propagate
     dldir, urlmapfn = _get_download_cache_locs()
 
-    block_size = 65536
     if hexdigest is None:
-        with open(filename, "rb") as f:
-            hash = hashlib.md5()
-            block = f.read(block_size)
-            while block:
-                hash.update(block)
-                block = f.read(block_size)
-        hexdigest = hash.hexdigest()
+        hexdigest = compute_hash(filename)
     _acquire_download_cache_lock()
     try:
         with shelve.open(urlmapfn) as url2hash:
