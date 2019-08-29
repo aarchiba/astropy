@@ -9,6 +9,8 @@ import tempfile
 import urllib.request
 import urllib.error
 
+from tempfile import NamedTemporaryFile
+
 import pytest
 
 from astropy.utils.data import (_get_download_cache_locs, CacheMissingWarning,
@@ -17,6 +19,7 @@ from astropy.utils.data import (_get_download_cache_locs, CacheMissingWarning,
 from astropy.tests.helper import raises, catch_warnings
 
 TESTURL = 'http://www.astropy.org'
+TESTURL2 = "http://www.astropy.org/about.html"
 TESTLOCAL = get_pkg_data_filename(os.path.join('data', 'local.dat'))
 
 # General file object function
@@ -472,6 +475,74 @@ def test_is_url_in_cache():
 
     download_file(TESTURL, cache=True, show_progress=False)
     assert is_url_in_cache(TESTURL)
+
+
+@pytest.mark.remote_data(source='astropy')
+def test_export_import_roundtrip_one():
+    from astropy.utils.data import (
+            download_file, is_url_in_cache, get_cached_urls,
+            clear_download_cache,
+            export_cache, import_cache,
+            )
+    with NamedTemporaryFile("wb") as zip_file:
+        with open(download_file(TESTURL, cache=True, show_progress=False), "rb") as f:
+            contents = f.read()
+        initial_urls_in_cache = sorted(get_cached_urls())
+        export_cache(zip_file, [TESTURL])
+        clear_download_cache(TESTURL)
+        import_cache(zip_file.name)
+        assert is_url_in_cache(TESTURL)
+        assert sorted(get_cached_urls()) == initial_urls_in_cache
+        with open(download_file(TESTURL, cache=True, show_progress=False), "rb") as f:
+            new_contents = f.read()
+        assert new_contents == contents
+
+
+@pytest.mark.remote_data(source='astropy')
+def test_export_with_download():
+    from astropy.utils.data import (
+            is_url_in_cache,
+            clear_download_cache,
+            export_cache,
+            )
+    with NamedTemporaryFile("wb") as zip_file:
+        clear_download_cache(TESTURL)
+        export_cache(zip_file, [TESTURL])
+        assert is_url_in_cache(TESTURL)
+
+
+@pytest.mark.remote_data(source='astropy')
+def test_import_one():
+    from astropy.utils.data import (
+            download_file, is_url_in_cache,
+            clear_download_cache,
+            export_cache, import_cache,
+            )
+    with NamedTemporaryFile("wb") as zip_file:
+        download_file(TESTURL, cache=True)
+        download_file(TESTURL2, cache=True)
+        assert is_url_in_cache(TESTURL2)
+        export_cache(zip_file, [TESTURL, TESTURL2])
+        clear_download_cache(TESTURL)
+        clear_download_cache(TESTURL2)
+        import_cache(zip_file.name, [TESTURL])
+        assert is_url_in_cache(TESTURL)
+        assert not is_url_in_cache(TESTURL2)
+
+
+@pytest.mark.remote_data(source='astropy')
+def test_export_import_roundtrip():
+    from astropy.utils.data import (
+            download_file, is_url_in_cache, get_cached_urls,
+            clear_download_cache,
+            export_cache, import_cache,
+            )
+    with NamedTemporaryFile("wb") as zip_file:
+        initial_urls_in_cache = sorted(get_cached_urls())
+        export_cache(zip_file)
+        clear_download_cache()
+        import_cache(zip_file.name)
+        assert sorted(get_cached_urls()) == initial_urls_in_cache
 
 
 def test_get_readable_fileobj_cleans_up_temporary_files(tmpdir, monkeypatch):

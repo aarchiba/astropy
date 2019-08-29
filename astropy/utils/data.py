@@ -10,6 +10,7 @@ import fnmatch
 import hashlib
 import os
 import io
+import json
 import pathlib
 import shutil
 import socket
@@ -19,6 +20,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import shelve
+import zipfile
 
 from tempfile import NamedTemporaryFile, gettempdir
 from warnings import warn
@@ -34,7 +36,8 @@ __all__ = [
     'get_pkg_data_filenames', 'compute_hash', 'clear_download_cache',
     'CacheMissingWarning', 'get_free_space_in_dir',
     'check_free_space_in_dir', 'download_file',
-    'download_files_in_parallel', 'is_url_in_cache', 'get_cached_urls']
+    'download_files_in_parallel', 'is_url_in_cache', 'get_cached_urls',
+    'export_cache','import_cache']
 
 _dataurls_to_alias = {}
 
@@ -1062,19 +1065,9 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None):
                         raise
 
         if cache:
-            _acquire_download_cache_lock()
-            try:
-                with shelve.open(urlmapfn) as url2hash:
-                    # We check now to see if another process has
-                    # inadvertently written the file underneath us
-                    # already
-                    if url_key in url2hash:
-                        return url2hash[url_key]
-                    local_path = os.path.join(dldir, hash.hexdigest())
-                    shutil.move(f.name, local_path)
-                    url2hash[url_key] = local_path
-            finally:
-                _release_download_cache_lock()
+            local_path = _import_to_cache(url_key, f.name,
+                                          hexdigest=hash.hexdigest(),
+                                          remove_original=True)
         else:
             local_path = f.name
             if missing_cache:
@@ -1352,6 +1345,42 @@ def _release_download_cache_lock():
         raise RuntimeError(msg.format(lockdir))
 
 
+def _import_to_cache(url_key, filename,
+                     hexdigest=None,
+                     remove_original=False):
+    """Import the on-disk file specified by filename to the cache"""
+    # If this fails somehow might as well let the exception propagate
+    dldir, urlmapfn = _get_download_cache_locs()
+
+    block_size = 65536
+    if hexdigest is None:
+        with open(filename, "rb") as f:
+            hash = hashlib.md5()
+            block = f.read(block_size)
+            while block:
+                hash.update(block)
+                block = f.read(block_size)
+            hexdigest = hash.hexdigest()
+    _acquire_download_cache_lock()
+    try:
+        with shelve.open(urlmapfn) as url2hash:
+            # We check now to see if another process has
+            # inadvertently written the file underneath us
+            # already
+            if url_key in url2hash:
+                return url2hash[url_key]
+            local_path = os.path.join(dldir, hexdigest)
+            if remove_original:
+                shutil.move(filename, local_path)
+            else:
+                shutil.copy(filename, local_path)
+            url2hash[url_key] = local_path
+    finally:
+        _release_download_cache_lock()
+    return local_path
+
+
+
 def get_cached_urls():
     """
     Get the list of URLs in the cache. Especially useful for looking up what
@@ -1373,3 +1402,85 @@ def get_cached_urls():
 
     with shelve.open(urlmapfn) as url2hash:
         return list(url2hash.keys())
+
+
+_cache_zip_index_name = "index.json"
+
+
+def export_cache(filename_or_obj, urls=None):
+    """Exports the cache contents as a ZIP file
+
+    Parameters
+    ----------
+    filename_or_obj : str or file-like
+        Where to put the created ZIP file. Must be something the zipfile
+        module can write to.
+    urls : iterable of str or None
+        The URLs to include in the exported cache. The default is all
+        URLs currently in the cache. If a URL is included in this list
+        but is not currently in the cache, it will be downloaded to the
+        cache first and then exported.
+
+    See Also
+    --------
+    import_cache : import the contents of such a ZIP file into the cache
+    """
+    if urls is None:
+        urls = get_cached_urls()
+    prefix = "cache"
+    with zipfile.ZipFile(filename_or_obj, 'w',
+                         compression=zipfile.ZIP_DEFLATED) as z:
+        index = {}
+        for u in urls:
+            # timeout=0 might prevent going to the Net if the url has
+            # disappeared since the loop started
+            fn = download_file(u, cache=True)
+            z_fn = os.path.join(prefix, os.path.split(fn)[-1])
+            index[u] = z_fn
+            z.write(fn, z_fn)
+        z.writestr(_cache_zip_index_name, json.dumps(index))
+
+
+def import_cache(filename_or_obj, urls=None):
+    """Imports the contents of a ZIP file into the cache
+
+    The ZIP file must be in the format produced by `export_cache`,
+    specifically it must have a file `index.json` that is a dictionary
+    mapping URLs to filenames inside the ZIP.
+
+    Parameters
+    ----------
+    filename_or_obj : str or file-like
+        Where to put the created ZIP file. Must be something the zipfile
+        module can write to.
+    urls : iterable of str or None
+        The URLs to import from the ZIP file. The default is all
+        URLs in the file.
+
+    See Also
+    --------
+    export_cache : export the contents the cache to of such a ZIP file
+    """
+    block_size = 65536
+    with zipfile.ZipFile(filename_or_obj, 'r',
+                         compression=zipfile.ZIP_DEFLATED) as z:
+        index = json.loads(z.read(_cache_zip_index_name))
+        if urls is None:
+            urls = index.keys()
+        for k in urls:
+            v = index[k]
+            with NamedTemporaryFile("wb") as f_temp:
+                with z.open(v) as f_zip:
+                    hash = hashlib.md5()
+                    block = f_zip.read(block_size)
+                    while block:
+                        f_temp.write(block)
+                        hash.update(block)
+                        block = f_zip.read(block_size)
+                    hexdigest = hash.hexdigest()
+                _import_to_cache(k, f_temp.name,
+                                 hexdigest=hexdigest,
+                                 remove_original=True)
+                # NamedTemporaryFile doesn't like when the file disappears
+                with open(f_temp.name, "wb"):
+                    pass
