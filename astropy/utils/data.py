@@ -1393,12 +1393,15 @@ def check_download_cache(check_hashes=False):
             raise ValueError("Lock file missing!?")
         with shelve.open(urlmapfn) as url2hash:
             for u, h in url2hash.items():
-                try:
-                    hash_files.remove(h)
-                except KeyError:
+                if not os.path.exists(h):
                     msg = "URL '{}' points to nonexistent file '{}'".format(
                             u, h)
                     raise ValueError(msg)
+                try:
+                    hash_files.remove(h)
+                except KeyError:
+                    # Huh. Two different URLs retrieved identical files.
+                    pass
                 d, hexdigest = os.path.split(h)
                 if dldir != d:
                     msg = "Expected downloaded files to be in '{}' but " +\
