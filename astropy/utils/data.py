@@ -37,7 +37,8 @@ __all__ = [
     'CacheMissingWarning', 'get_free_space_in_dir',
     'check_free_space_in_dir', 'download_file',
     'download_files_in_parallel', 'is_url_in_cache', 'get_cached_urls',
-    'export_cache','import_cache']
+    'export_cache','import_cache', 'check_download_cache',
+    ]
 
 _dataurls_to_alias = {}
 
@@ -1306,6 +1307,10 @@ def _get_download_cache_locs():
 
 # the cache directory must be locked before any writes are performed.  Same for
 # the hash shelve, so this should be used for both.
+#
+# FIXME: does everything work fine - including the shelve - if the cache is
+# read while another process writes it? Reads are currently completely
+# unprotected.
 def _acquire_download_cache_lock():
     """
     Uses the lock directory method.  This is good because `mkdir` is
@@ -1345,6 +1350,81 @@ def _release_download_cache_lock():
         raise RuntimeError(msg.format(lockdir))
 
 
+def check_download_cache(check_hashes=False):
+    """Do a consistency check on the cache
+
+    Because the cache is shared by all versions of astropy in all virtualenvs
+    run by your user, possibly concurrently, it could accumulate problems.
+    This could lead to hard-to-debug problems or wasted space. This function
+    detects a number of incorrect conditions, including nonexistent files that
+    are indexed, files that are indexed but in the wrong place, and, if you
+    request it, files whose content does not mash the hash that is indexed.
+
+    This funtion also returns a list of non-indexed files. A few will be
+    associated with the shelve object; their exact names depend on the backend
+    used but will probably be based on `urlmap`. The presence of other files,
+    particularly those that 32-character hex strings or start with those,
+    probably indicates that something has gone wrong and inaccessible files
+    have accumulated in the cache. These can be removed with
+    ``clear_download_cache(k)`` for a file named 'k' or
+    ``clear_download_cache()`` which should empty the entire
+    cache and return it to a reasonable, if empty, state.
+
+    Returns
+    -------
+    strays : set of strings
+        This is the set of files in the cache directory that do not correspond
+        to known URLs.
+    """
+    block_size = 65536
+    dldir, urlmapfn = _get_download_cache_locs()
+    # We're only reading but without the lock goodness knows what
+    # inconsistencies might be detected
+    _acquire_download_cache_lock()
+    try:
+        hash_files = set(os.path.join(dldir, k)
+                         for k in os.listdir(dldir))
+        try:
+            hash_files.remove(os.path.join(dldir, "urlmap"))
+        except KeyError:
+            pass
+        try:
+            hash_files.remove(os.path.join(dldir, "lock"))
+        except KeyError:
+            raise ValueError("Lock file missing!?")
+        with shelve.open(urlmapfn) as url2hash:
+            for u, h in url2hash.items():
+                try:
+                    hash_files.remove(h)
+                except KeyError:
+                    msg = "URL '{}' points to nonexistent file '{}'".format(
+                            u, h)
+                    raise ValueError(msg)
+                d, hexdigest = os.path.split(h)
+                if dldir != d:
+                    msg = "Expected downloaded files to be in '{}' but " +\
+                          "URL '{}' points to file '{}'".format(
+                                  dldir, u, h)
+                    raise ValueError(msg)
+                if check_hashes:
+                    with open(h, "rb") as f:
+                        hash = hashlib.md5()
+                        block = f.read(block_size)
+                        while block:
+                            hash.update(block)
+                            block = f.read(block_size)
+                    hexdigest_file = hash.hexdigest()
+                    if hexdigest_file != hexdigest:
+                        msg = "File corresponding to {} has contents that " +\
+                              "do not match the hash value: should be '{}' " +\
+                              "but is '{}'".format(
+                                      u, hexdigest, hexdigest_file)
+                        raise ValueError(msg)
+    finally:
+        _release_download_cache_lock()
+    return hash_files
+
+
 def _import_to_cache(url_key, filename,
                      hexdigest=None,
                      remove_original=False):
@@ -1360,7 +1440,7 @@ def _import_to_cache(url_key, filename,
             while block:
                 hash.update(block)
                 block = f.read(block_size)
-            hexdigest = hash.hexdigest()
+        hexdigest = hash.hexdigest()
     _acquire_download_cache_lock()
     try:
         with shelve.open(urlmapfn) as url2hash:
