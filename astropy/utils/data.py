@@ -1368,6 +1368,9 @@ def _import_to_cache(url_key, filename,
             # inadvertently written the file underneath us
             # already
             if url_key in url2hash:
+                # FIXME: how to test this collision?
+                # We'd probably need to mock urllib with sufficient
+                # deviousness.
                 return url2hash[url_key]
             local_path = os.path.join(dldir, hexdigest)
             if remove_original:
@@ -1378,7 +1381,6 @@ def _import_to_cache(url_key, filename,
     finally:
         _release_download_cache_lock()
     return local_path
-
 
 
 def get_cached_urls():
@@ -1468,6 +1470,8 @@ def import_cache(filename_or_obj, urls=None):
         if urls is None:
             urls = index.keys()
         for k in urls:
+            if is_url_in_cache(k):
+                continue
             v = index[k]
             with NamedTemporaryFile("wb") as f_temp:
                 with z.open(v) as f_zip:
