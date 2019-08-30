@@ -1515,7 +1515,7 @@ def export_download_cache(filename_or_obj, urls=None):
 def import_download_cache(filename_or_obj, urls=None):
     """Imports the contents of a ZIP file into the cache
 
-    The ZIP file must be in the format produced by `export_cache`,
+    The ZIP file must be in the format produced by `export_download_cache`,
     specifically it must have a file ``index.json`` that is a dictionary
     mapping URLs to filenames inside the ZIP.
 
