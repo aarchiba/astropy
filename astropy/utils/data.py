@@ -38,10 +38,11 @@ __all__ = [
     'CacheMissingWarning', 'get_free_space_in_dir',
     'check_free_space_in_dir', 'download_file',
     'download_files_in_parallel', 'is_url_in_cache', 'get_cached_urls',
-    'export_download_cache','import_download_cache', 'check_download_cache',
+    'export_download_cache', 'import_download_cache', 'check_download_cache',
     ]
 
 _dataurls_to_alias = {}
+
 
 class Conf(_config.ConfigNamespace):
     """
@@ -56,7 +57,8 @@ class Conf(_config.ConfigNamespace):
         'Mirror URL for astropy remote data site.')
     remote_timeout = _config.ConfigItem(
         10.,
-        'Time to wait for remote data queries (in seconds).')
+        'Time to wait for remote data queries (in seconds).',
+        aliases=['astropy.coordinates.name_resolve.name_resolve_timeout'])
     compute_hash_block_size = _config.ConfigItem(
         2 ** 16,  # 64K
         'Block size for computing MD5 file hashes.')
@@ -98,7 +100,8 @@ def _is_url(string):
     # we can't just check that url.scheme is not an empty string, because
     # file paths in windows would return a non-empty scheme (e.g. e:\\
     # returns 'e').
-    return url.scheme.lower() in ['http', 'https', 'ftp', 'sftp', 'ssh', 'file']
+    return url.scheme.lower() in [
+        'http', 'https', 'ftp', 'sftp', 'ssh', 'file']
 
 
 def _is_inside(path, parent_path):
@@ -114,9 +117,7 @@ def _is_inside(path, parent_path):
 def get_readable_fileobj(name_or_obj, encoding=None, cache=False,
                          show_progress=True, remote_timeout=None,
                          sources=None):
-    """
-    Given a filename, pathlib.Path object or a readable file-like object, return a context
-    manager that yields a readable file-like object.
+    """A context manager that yields a readable, seekable file-like object.
 
     This supports passing filenames, URLs, and readable file-like objects,
     any of which can be compressed in gzip, bzip2 or lzma (xz) if the
@@ -269,7 +270,7 @@ def get_readable_fileobj(name_or_obj, encoding=None, cache=False,
             raise ValueError(
                 ".xz format files are not supported since the Python "
                 "interpreter does not include the lzma module.")
-        except (OSError, EOFError) as e:  # invalid xz file
+        except (OSError, EOFError):  # invalid xz file
             fileobj.seek(0)
             fileobj_new.close()
             # should we propagate this to the caller to signal bad content?
@@ -457,11 +458,12 @@ def get_pkg_data_fileobj(data_name, package=None, encoding=None, cache=True):
         with get_readable_fileobj(datafn, encoding=encoding) as fileobj:
             yield fileobj
     else:  # remote file
-        with get_readable_fileobj(conf.dataurl + data_name,
-                                  encoding=encoding,
-                                  cache=cache,
-                                  sources=[conf.dataurl + data_name,
-                                           conf.dataurl_mirror + data_name],
+        with get_readable_fileobj(
+            conf.dataurl + data_name,
+            encoding=encoding,
+            cache=cache,
+            sources=[conf.dataurl + data_name,
+                     conf.dataurl_mirror + data_name],
         ) as fileobj:
             # We read a byte to trigger any URLErrors
             fileobj.read(1)
@@ -938,7 +940,7 @@ def check_free_space_in_dir(path, size):
 
 
 def download_file(remote_url, cache=False, show_progress=True, timeout=None,
-                  sources=None):
+                  sources=None, update_cache=False):
     """
     Accepts a URL, downloads and optionally caches the result
     returning the filename, with a name determined by the file's MD5
@@ -969,6 +971,11 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
         long waits for a primary server that is known to be inaccessible
         at the moment.
 
+    update_cache : bool, optional
+        If true, attempt to download the file anew; if this is successful
+        replace the current version. If not, raise a URLError but leave
+        the existing cached value intact.
+
     Returns
     -------
     local_path : str
@@ -987,7 +994,11 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
     if sources is None:
         sources = [remote_url]
     if not sources:
-        raise ValueError("No sources listed! Please include primary URL if you want it to be included as a valid source.")
+        raise ValueError(
+            "No sources listed! Please include primary URL if you want it "
+            "to be included as a valid source.")
+    if update_cache and not cache:
+        raise ValueError("update_cache only makes sense when using the cache!")
 
     missing_cache = False
 
@@ -1003,7 +1014,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
 
     url_key = remote_url
 
-    if cache:
+    if cache and not update_cache:
         try:
             # We don't need to acquire the lock here, since we are only reading
             with shelve.open(urlmapfn, flag='r') as url2hash:
@@ -1052,6 +1063,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
                             if os.path.exists(f.name):
                                 os.remove(f.name)
                             raise
+                # Success!
                 break
 
         except urllib.error.URLError as e:
@@ -1069,6 +1081,10 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
         raise errors[0]
 
     if cache:
+        # If there is something there already for url_key, probably because of
+        # update_cache, clear it out to ensure that it gets deleted when
+        # nothing else references it.
+        clear_download_cache(url_key)
         local_path = _import_to_cache(url_key, f.name,
                                       hexdigest=hash.hexdigest(),
                                       remove_original=True)
@@ -1228,9 +1244,9 @@ def clear_download_cache(hashorurl=None):
     _acquire_download_cache_lock()
     try:
         if hashorurl is None:
-            # dldir includes both the download files and the urlmapfn.  This structure
-            # is required since we cannot know a priori the actual file name corresponding
-            # to the shelve map named urlmapfn.
+            # dldir includes both the download files and the urlmapfn.  This
+            # structure is required since we cannot know a priori the actual
+            # file name corresponding to the shelve map named urlmapfn.
             if os.path.exists(dldir):
                 shutil.rmtree(dldir)
         else:
@@ -1256,7 +1272,8 @@ def clear_download_cache(hashorurl=None):
                             break
                     else:
                         if os.path.exists(filepath):
-                            # Make sure the filepath still actually exists (perhaps user removed it)
+                            # Make sure the filepath still actually exists
+                            # (perhaps user removed it)
                             os.unlink(filepath)
                 # Otherwise could not find file or url, but no worries.
                 # Clearing download cache just makes sure that the file or url
@@ -1293,7 +1310,7 @@ def _get_download_cache_locs():
     if not os.path.exists(datadir):
         try:
             os.makedirs(datadir)
-        except OSError as e:
+        except OSError:
             if not os.path.exists(datadir):
                 raise
     elif not os.path.isdir(datadir):
@@ -1478,6 +1495,7 @@ def get_cached_urls():
             return list(url2hash.keys())
     except dbm.error:
         return []
+
 
 _cache_zip_index_name = "index.json"
 

@@ -4,7 +4,6 @@
 import os
 import sys
 import base64
-import shelve
 import hashlib
 import pathlib
 import tempfile
@@ -18,9 +17,9 @@ import pytest
 from astropy.utils import data
 from astropy.config import paths
 from astropy.utils.data import (CacheMissingWarning, conf, compute_hash, download_file,
-                                get_cached_urls, is_url_in_cache, _find_pkg_data_path,
-                                check_download_cache, clear_download_cache, get_pkg_data_fileobj,
-                                get_readable_fileobj, export_download_cache, get_pkg_data_contents,
+                                get_cached_urls, is_url_in_cache, check_download_cache,
+                                clear_download_cache, get_pkg_data_fileobj, get_readable_fileobj,
+                                export_download_cache, get_pkg_data_contents,
                                 get_pkg_data_filename, import_download_cache,
                                 _get_download_cache_locs, download_files_in_parallel)
 from astropy.tests.helper import raises, catch_warnings
@@ -118,6 +117,7 @@ def test_clear_download_multiple_references():
     assert not os.path.exists(g_hash), \
         "No reference exists any more, file should be deleted"
 
+
 @contextlib.contextmanager
 def make_url(contents, delete=True):
     with NamedTemporaryFile("w") as f:
@@ -130,35 +130,61 @@ def make_url(contents, delete=True):
     if delete:
         yield url
 
+
 def test_sources_normal():
     with make_url("primary", delete=False) as primary:
         with make_url("fallback1", delete=False) as fallback1:
-            f = download_file(primary, cache=True, sources=[primary, fallback1])
+            f = download_file(primary, cache=True,
+                              sources=[primary, fallback1])
             assert open(f).read() == "primary"
             assert not is_url_in_cache(fallback1)
+
 
 def test_sources_fallback():
     with make_url("primary", delete=True) as primary:
         with make_url("fallback1", delete=False) as fallback1:
-            f = download_file(primary, cache=True, sources=[primary, fallback1])
+            f = download_file(primary, cache=True,
+                              sources=[primary, fallback1])
             assert open(f).read() == "fallback1"
             assert not is_url_in_cache(fallback1)
+
 
 def test_sources_ignore_primary():
     with make_url("primary", delete=False) as primary:
         with make_url("fallback1", delete=False) as fallback1:
-            f = download_file(primary, cache=True, sources=[fallback1])
+            f = download_file(primary, cache=True,
+                              sources=[fallback1])
             assert open(f).read() == "fallback1"
             assert not is_url_in_cache(fallback1)
+
 
 def test_sources_multiple():
     with make_url("primary", delete=True) as primary:
         with make_url("fallback1", delete=True) as fallback1:
             with make_url("fallback2", delete=False) as fallback2:
-                f = download_file(primary, cache=True, sources=[primary, fallback2])
+                f = download_file(primary, cache=True,
+                                  sources=[primary, fallback2])
                 assert open(f).read() == "fallback2"
                 assert not is_url_in_cache(fallback1)
                 assert not is_url_in_cache(fallback2)
+
+
+def test_update_url():
+    with NamedTemporaryFile("w") as f:
+        f.write("old")
+        f.flush()
+        f_url = "file://" + f.name
+        assert open(download_file(f_url, cache=True)).read() == "old"
+        with open(f.name, "w") as g:
+            g.write("new")
+        assert open(download_file(f_url, cache=True)).read() == "old"
+        assert open(download_file(f_url, cache=True,
+                                  update_cache=True)).read() == "new"
+    assert open(download_file(f_url, cache=True)).read() == "new"
+    with pytest.raises(urllib.error.URLError):
+        download_file(f_url, cache=True,
+                      update_cache=True)
+    assert open(download_file(f_url, cache=True)).read() == "new"
 
 
 @pytest.mark.remote_data(source='astropy')
@@ -543,7 +569,8 @@ def test_check_download_cache():
 @pytest.mark.remote_data(source='astropy')
 def test_export_import_roundtrip_one():
     with NamedTemporaryFile("wb") as zip_file:
-        with open(download_file(TESTURL, cache=True, show_progress=False), "rb") as f:
+        with open(download_file(TESTURL, cache=True, show_progress=False),
+                  "rb") as f:
             contents = f.read()
         normal = check_download_cache()
         initial_urls_in_cache = sorted(get_cached_urls())
@@ -552,7 +579,8 @@ def test_export_import_roundtrip_one():
         import_download_cache(zip_file.name)
         assert is_url_in_cache(TESTURL)
         assert sorted(get_cached_urls()) == initial_urls_in_cache
-        with open(download_file(TESTURL, cache=True, show_progress=False), "rb") as f:
+        with open(download_file(TESTURL, cache=True, show_progress=False),
+                  "rb") as f:
             new_contents = f.read()
         assert new_contents == contents
         assert check_download_cache(check_hashes=True) == normal
