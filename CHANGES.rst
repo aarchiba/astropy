@@ -148,7 +148,8 @@ astropy.utils
 - Added ``export_cache`` and ``import_cache`` to permit transporting
   downloaded data to machines with no Internet connection. Also
   ``check_download_cache`` to confirm that the persistent cache has not become
-  damaged. [#9182]
+  damaged. ``download_file`` now accepts a list of fallback sources, and is able
+  to update the cache at the user's request. [#9182]
 
 astropy.visualization
 ^^^^^^^^^^^^^^^^^^^^^

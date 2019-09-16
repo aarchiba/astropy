@@ -85,7 +85,7 @@ def test_clear_download_multiple_references():
     # First ensure that there is no file with these contents in the cache
     with NamedTemporaryFile("w") as a:
         a.write(content)
-        a_url = "file://" + a.name
+        a_url = "file://" + urllib.request.pathname2url(a.name)
         clear_download_cache(a_url)
         a_hash = download_file(a_url, cache=True)
         clear_download_cache(a_hash)
@@ -95,12 +95,12 @@ def test_clear_download_multiple_references():
     g_hash = None
     with NamedTemporaryFile("w") as f:
         f.write(content)
-        f_url = "file://" + f.name
+        f_url = "file://" + urllib.request.pathname2url(f.name)
         clear_download_cache(f_url)
         f_hash = download_file(f_url, cache=True)
     with NamedTemporaryFile("w") as g:
         g.write(content)
-        g_url = "file://" + g.name
+        g_url = "file://" + urllib.request.pathname2url(g.name)
         clear_download_cache(g_url)
         g_hash = download_file(g_url, cache=True)
     assert f_hash == g_hash
@@ -123,7 +123,7 @@ def make_url(contents, delete=True):
     with NamedTemporaryFile("w") as f:
         f.write(contents)
         f.flush()
-        url = "file://" + f.name
+        url = "file://" + urllib.request.pathname2url(f.name)
         clear_download_cache(url)
         if not delete:
             yield url
@@ -173,7 +173,7 @@ def test_update_url():
     with NamedTemporaryFile("w") as f:
         f.write("old")
         f.flush()
-        f_url = "file://" + f.name
+        f_url = "file://" + urllib.request.pathname2url(f.name)
         assert open(download_file(f_url, cache=True)).read() == "old"
         with open(f.name, "w") as g:
             g.write("new")
