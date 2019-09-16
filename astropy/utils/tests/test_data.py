@@ -163,7 +163,9 @@ def test_sources_multiple():
         with make_url("fallback1", delete=True) as fallback1:
             with make_url("fallback2", delete=False) as fallback2:
                 f = download_file(primary, cache=True,
-                                  sources=[primary, fallback2])
+                                  sources=[primary,
+                                           fallback1,
+                                           fallback2])
                 assert open(f).read() == "fallback2"
                 assert not is_url_in_cache(fallback1)
                 assert not is_url_in_cache(fallback2)
