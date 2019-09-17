@@ -1024,7 +1024,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
             # The shelve doesn't exist or is damaged
             pass
 
-    errors = []
+    errors = {}
     for source_url in sources:
         try:
             with urllib.request.urlopen(source_url, timeout=timeout) as remote:
@@ -1070,15 +1070,22 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
             if hasattr(e, 'reason') and hasattr(e.reason, 'errno') and e.reason.errno == 8:
                 e.reason.strerror = e.reason.strerror + '. requested URL: ' + remote_url
                 e.reason.args = (e.reason.errno, e.reason.strerror)
-            errors.append(e)
+            errors[source_url] = e
         except socket.timeout as e:
             # this isn't supposed to happen, but occasionally a socket.timeout gets
             # through.  It's supposed to be caught in `urrlib2` and raised in this
             # way, but for some reason in mysterious circumstances it doesn't. So
             # we'll just re-raise it here instead
-            errors.append(urllib.error.URLError(e))
+            errors[source_url] = e
+        #except OSError as e:
+        #    # This shouldn't happen but maybe it does on Windows when the URL points
+        #    # to a local file?
+        #    # This sucks because it can catch OSErrors not from inside urllib
+        #    errors[source_url] = e
     else:   # No success
-        raise errors[0]
+        raise urllib.error.URLError(
+            "Unable to open any source! Exceptions were {}".format(errors)) \
+            from errors[sources[0]]
 
     if cache:
         # If there is something there already for url_key, probably because of

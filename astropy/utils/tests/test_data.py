@@ -176,6 +176,19 @@ def test_sources_multiple():
                 assert not is_url_in_cache(fallback2)
 
 
+def test_sources_multiple_missing():
+    with make_url("primary", delete=True) as primary:
+        with make_url("fallback1", delete=True) as fallback1:
+            with make_url("fallback2", delete=True) as fallback2:
+                with pytest.raises(urllib.error.URLError):
+                    f = download_file(primary, cache=True,
+                                      sources=[primary,
+                                               fallback1,
+                                               fallback2])
+                assert not is_url_in_cache(fallback1)
+                assert not is_url_in_cache(fallback2)
+
+
 def test_update_url():
     with NamedTemporaryFile("w+") as f:
         f.write("old")
