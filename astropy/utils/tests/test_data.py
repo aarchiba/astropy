@@ -17,12 +17,12 @@ import pytest
 
 from astropy.utils import data
 from astropy.config import paths
-from astropy.utils.data import (CacheMissingWarning, conf, compute_hash, download_file,
-                                get_cached_urls, is_url_in_cache, check_download_cache,
-                                clear_download_cache, get_pkg_data_fileobj, get_readable_fileobj,
-                                export_download_cache, get_pkg_data_contents,
-                                get_pkg_data_filename, import_download_cache,
-                                _get_download_cache_locs, download_files_in_parallel)
+from astropy.utils.data import (
+    CacheMissingWarning, conf, compute_hash, download_file, get_cached_urls,
+    is_url_in_cache, check_download_cache, clear_download_cache,
+    get_pkg_data_fileobj, get_readable_fileobj, export_download_cache,
+    get_pkg_data_contents, get_pkg_data_filename, import_download_cache,
+    _get_download_cache_locs, download_files_in_parallel)
 from astropy.tests.helper import raises, catch_warnings
 
 TESTURL = 'http://www.astropy.org'
@@ -80,15 +80,8 @@ def test_download_parallel():
 
 
 def url_to(path):
-    return urllib.parse.urlunsplit(
-        urllib.parse.SplitResult(
-            scheme="file",
-            netloc="",
-            path=path,
-            query="",
-            fragment="",
-        )
-    )
+    return pathlib.Path(path).resolve().as_uri()
+
 
 def test_clear_download_multiple_references():
     """Check that files with the same hash don't confuse the storage."""
