@@ -11,6 +11,7 @@ import contextlib
 import urllib.error
 import urllib.parse
 import urllib.request
+import warnings
 from tempfile import NamedTemporaryFile
 
 import pytest
@@ -444,6 +445,7 @@ def test_data_noastropy_fallback(monkeypatch):
 
     # first try with cache
     with catch_warnings(CacheMissingWarning) as w:
+        warnings.simplefilter("ignore", ResourceWarning)
         fnout = data.download_file(TESTURL, cache=True)
 
     assert os.path.isfile(fnout)

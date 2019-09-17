@@ -1010,6 +1010,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
             estr = '' if len(e.args) < 1 else (': ' + str(e))
             warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
             cache = False
+            update_cache = False
             missing_cache = True  # indicates that the cache is missing to raise a warning later
 
     url_key = remote_url
