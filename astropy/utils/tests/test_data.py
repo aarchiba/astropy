@@ -88,7 +88,7 @@ def test_clear_download_multiple_references():
     content = "Test data; doesn't matter much.\n"
 
     # First ensure that there is no file with these contents in the cache
-    with NamedTemporaryFile("w") as a:
+    with NamedTemporaryFile("w+") as a:
         a.write(content)
         a_url = url_to(a.name)
         clear_download_cache(a_url)
@@ -98,12 +98,12 @@ def test_clear_download_multiple_references():
     # Now make two URLs with the same content
     f_hash = None
     g_hash = None
-    with NamedTemporaryFile("w") as f:
+    with NamedTemporaryFile("w+") as f:
         f.write(content)
         f_url = url_to(f.name)
         clear_download_cache(f_url)
         f_hash = download_file(f_url, cache=True)
-    with NamedTemporaryFile("w") as g:
+    with NamedTemporaryFile("w+") as g:
         g.write(content)
         g_url = url_to(g.name)
         clear_download_cache(g_url)
@@ -125,7 +125,7 @@ def test_clear_download_multiple_references():
 
 @contextlib.contextmanager
 def make_url(contents, delete=True):
-    with NamedTemporaryFile("w") as f:
+    with NamedTemporaryFile("w+") as f:
         f.write(contents)
         f.flush()
         url = url_to(f.name)
@@ -177,7 +177,7 @@ def test_sources_multiple():
 
 
 def test_update_url():
-    with NamedTemporaryFile("w") as f:
+    with NamedTemporaryFile("w+") as f:
         f.write("old")
         f.flush()
         f_url = url_to(f.name)
