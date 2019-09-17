@@ -9,6 +9,7 @@ import pathlib
 import tempfile
 import contextlib
 import urllib.error
+import urllib.parse
 import urllib.request
 from tempfile import NamedTemporaryFile
 
@@ -78,6 +79,17 @@ def test_download_parallel():
     assert all([os.path.isfile(f) for f in fnout]), fnout
 
 
+def url_to(path):
+    return urllib.parse.urlunsplit(
+        urllib.parse.SplitResult(
+            scheme="file",
+            netloc="",
+            path=path,
+            query="",
+            fragment="",
+        )
+    )
+
 def test_clear_download_multiple_references():
     """Check that files with the same hash don't confuse the storage."""
     content = "Test data; doesn't matter much.\n"
@@ -85,7 +97,7 @@ def test_clear_download_multiple_references():
     # First ensure that there is no file with these contents in the cache
     with NamedTemporaryFile("w") as a:
         a.write(content)
-        a_url = "file://" + urllib.request.pathname2url(a.name)
+        a_url = url_to(a.name)
         clear_download_cache(a_url)
         a_hash = download_file(a_url, cache=True)
         clear_download_cache(a_hash)
@@ -95,12 +107,12 @@ def test_clear_download_multiple_references():
     g_hash = None
     with NamedTemporaryFile("w") as f:
         f.write(content)
-        f_url = "file://" + urllib.request.pathname2url(f.name)
+        f_url = url_to(f.name)
         clear_download_cache(f_url)
         f_hash = download_file(f_url, cache=True)
     with NamedTemporaryFile("w") as g:
         g.write(content)
-        g_url = "file://" + urllib.request.pathname2url(g.name)
+        g_url = url_to(g.name)
         clear_download_cache(g_url)
         g_hash = download_file(g_url, cache=True)
     assert f_hash == g_hash
@@ -123,7 +135,7 @@ def make_url(contents, delete=True):
     with NamedTemporaryFile("w") as f:
         f.write(contents)
         f.flush()
-        url = "file://" + urllib.request.pathname2url(f.name)
+        url = url_to(f.name)
         clear_download_cache(url)
         if not delete:
             yield url
@@ -175,7 +187,7 @@ def test_update_url():
     with NamedTemporaryFile("w") as f:
         f.write("old")
         f.flush()
-        f_url = "file://" + urllib.request.pathname2url(f.name)
+        f_url = url_to(f.name)
         assert open(download_file(f_url, cache=True)).read() == "old"
         with open(f.name, "w") as g:
             g.write("new")
@@ -629,7 +641,7 @@ def test_export_import_roundtrip():
 def test_get_readable_fileobj_cleans_up_temporary_files(tmpdir, monkeypatch):
     """checks that get_readable_fileobj leaves no temporary files behind"""
     # Create a 'file://' URL pointing to a path on the local filesystem
-    url = 'file://' + urllib.request.pathname2url(TESTLOCAL)
+    url = url_to(TESTLOCAL)
 
     # Save temporary files to a known location
     monkeypatch.setattr(tempfile, 'tempdir', str(tmpdir))
