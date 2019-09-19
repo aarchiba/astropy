@@ -116,7 +116,7 @@ def _is_inside(path, parent_path):
 @contextlib.contextmanager
 def get_readable_fileobj(name_or_obj, encoding=None, cache=False,
                          show_progress=True, remote_timeout=None,
-                         sources=None):
+                         sources=None, update_cache=False):
     """A context manager that yields a readable, seekable file-like object.
 
     This supports passing filenames, URLs, and readable file-like objects,
@@ -172,6 +172,11 @@ def get_readable_fileobj(name_or_obj, encoding=None, cache=False,
         long waits for a primary server that is known to be inaccessible
         at the moment.
 
+    update_cache : bool, optional
+        If true, attempt to download the file anew; if this is successful
+        replace the current version. If not, raise a URLError but leave
+        the existing cached value intact.
+
     Returns
     -------
     file : readable file-like object
@@ -202,7 +207,8 @@ def get_readable_fileobj(name_or_obj, encoding=None, cache=False,
         if is_url:
             name_or_obj = download_file(
                 name_or_obj, cache=cache, show_progress=show_progress,
-                timeout=remote_timeout, sources=sources)
+                timeout=remote_timeout, sources=sources,
+                update_cache=update_cache)
         fileobj = io.FileIO(name_or_obj, 'r')
         if is_url and not cache:
             delete_fds.append(fileobj)
