@@ -50,8 +50,10 @@ else:
 @contextlib.contextmanager
 def preserve_cache(clear=False, check=False):
     """Allow tests to operate without wiping existing cache"""
-    with NamedTemporaryFile("wb") as zip_file:
-        export_download_cache(zip_file)
+    with TemporaryDirectory() as d:
+        zip_file_name = os.path.join(d,"cache.zip")
+        with open(zip_file_name, "wb") as zip_file:
+            export_download_cache(zip_file)
         try:
             if clear:
                 clear_download_cache()
@@ -84,49 +86,50 @@ def url_to(path):
     return pathlib.Path(path).resolve().as_uri()
 
 
-def test_clear_download_multiple_references():
+def test_clear_download_multiple_references(tmpdir):
     """Check that files with the same hash don't confuse the storage."""
     content = "Test data; doesn't matter much.\n"
 
-    with TemporaryDirectory() as d:
-        # First ensure that there is no file with these contents in the cache
-        a_name = os.path.join(d,"a")
-        f_name = os.path.join(d,"f")
-        g_name = os.path.join(d,"g")
+    d = tmpdir
 
-        with open(a_name, "w") as a:
-            a.write(content)
-        a_url = url_to(a_name)
-        clear_download_cache(a_url)
-        a_hash = download_file(a_url, cache=True)
-        clear_download_cache(a_hash)
+    # First ensure that there is no file with these contents in the cache
+    a_name = os.path.join(d,"a")
+    f_name = os.path.join(d,"f")
+    g_name = os.path.join(d,"g")
 
-        # Now make two URLs with the same content
-        f_hash = None
-        g_hash = None
-        with open(f_name, "w") as f:
-            f.write(content)
-        f_url = url_to(f_name)
-        clear_download_cache(f_url)
-        f_hash = download_file(f_url, cache=True)
-        with open(g_name, "w") as g:
-            g.write(content)
-        g_url = url_to(g_name)
-        clear_download_cache(g_url)
-        g_hash = download_file(g_url, cache=True)
-        assert f_hash == g_hash
-        assert is_url_in_cache(f_url)
-        assert is_url_in_cache(g_url)
+    with open(a_name, "w") as a:
+        a.write(content)
+    a_url = url_to(a_name)
+    clear_download_cache(a_url)
+    a_hash = download_file(a_url, cache=True)
+    clear_download_cache(a_hash)
 
-        clear_download_cache(f_url)
-        assert not is_url_in_cache(f_url)
-        assert is_url_in_cache(g_url)
-        assert os.path.exists(g_hash), \
-            "Contents should not be deleted while a reference exists"
+    # Now make two URLs with the same content
+    f_hash = None
+    g_hash = None
+    with open(f_name, "w") as f:
+        f.write(content)
+    f_url = url_to(f_name)
+    clear_download_cache(f_url)
+    f_hash = download_file(f_url, cache=True)
+    with open(g_name, "w") as g:
+        g.write(content)
+    g_url = url_to(g_name)
+    clear_download_cache(g_url)
+    g_hash = download_file(g_url, cache=True)
+    assert f_hash == g_hash
+    assert is_url_in_cache(f_url)
+    assert is_url_in_cache(g_url)
 
-        clear_download_cache(g_url)
-        assert not os.path.exists(g_hash), \
-            "No reference exists any more, file should be deleted"
+    clear_download_cache(f_url)
+    assert not is_url_in_cache(f_url)
+    assert is_url_in_cache(g_url)
+    assert os.path.exists(g_hash), \
+        "Contents should not be deleted while a reference exists"
+
+    clear_download_cache(g_url)
+    assert not os.path.exists(g_hash), \
+        "No reference exists any more, file should be deleted"
 
 
 @contextlib.contextmanager
@@ -208,6 +211,7 @@ def test_update_url():
         assert open(download_file(f_url, cache=True)).read() == "old"
         assert open(download_file(f_url, cache=True,
                                   update_cache=True)).read() == "new"
+    # Now the original file is gone
     assert open(download_file(f_url, cache=True)).read() == "new"
     with pytest.raises(urllib.error.URLError):
         download_file(f_url, cache=True,
