@@ -1276,7 +1276,7 @@ def clear_download_cache(hashorurl=None):
             if hashorurl is None:
                 if os.path.exists(dldir):
                     shutil.rmtree(dldir)
-            else:
+            elif urllib.parse.urlparse(hashorurl).scheme != "":
                 try:
                     filepath = url2hash.pop(hashorurl)
                     if not any(v == filepath for v in url2hash.values()):
@@ -1288,6 +1288,7 @@ def clear_download_cache(hashorurl=None):
                     return
                 except KeyError:
                     pass
+            else:  # it's a path
                 filepath = os.path.join(dldir, hashorurl)
                 if not _is_inside(filepath, dldir):
                     # URLs look like they are insided the directory
@@ -1298,7 +1299,8 @@ def clear_download_cache(hashorurl=None):
                         .format(filepath, dldir)
                     )
                 if os.path.exists(filepath):
-                    for k, v in url2hash.items():
+                    # Convert to list because we'll be modifying it as we go
+                    for k, v in list(url2hash.items()):
                         if v == filepath:
                             del url2hash[k]
                     os.unlink(filepath)
