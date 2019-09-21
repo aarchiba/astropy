@@ -875,7 +875,7 @@ def _find_hash_fn(hash):
     """
 
     try:
-        with _cache() as (dldir, urlmapfn):
+        with _cache() as (dldir, url2hash):
             hashfn = os.path.join(dldir, hash)
             if os.path.isfile(hashfn):
                 return hashfn
@@ -1015,10 +1015,19 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
 
     missing_cache = False
 
+    url_key = remote_url
+
     if cache:
         try:
-            with _cache():
-                pass
+            with _cache() as (dldir, url2hash):
+                if not update_cache:
+                    try:
+                        return url2hash[url_key]
+                    except KeyError:
+                        pass
+                else:
+                    # Cache works
+                    pass
         except OSError as e:
             msg = 'Remote data cache could not be accessed due to '
             estr = '' if len(e.args) < 1 else (': ' + str(e))
@@ -1028,19 +1037,6 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
             update_cache = False
             missing_cache = True  # indicates that the cache is missing to raise a warning later
 
-    url_key = remote_url
-
-    if cache and not update_cache:
-        with _cache() as (dldir, urlmapfn):
-            try:
-                with shelve.open(urlmapfn, flag='r') as url2hash:
-                    if url_key in url2hash:
-                        return url2hash[url_key]
-            except dbm.error:
-                # The shelve doesn't exist or is damaged
-                # We'd like to report an error if it is damaged but
-                # not existing is normal after clear_download_cache()
-                pass
 
     errors = {}
     for source_url in sources:
@@ -1058,7 +1054,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
                 if size is not None:
                     check_free_space_in_dir(gettempdir(), size)
                     if cache:
-                        with _cache() as (dldir, urlmapfn):
+                        with _cache() as (dldir, url2hash):
                             check_free_space_in_dir(dldir, size)
 
                 if show_progress and sys.stdout.isatty():
@@ -1132,18 +1128,12 @@ def is_url_in_cache(url_key):
 
     Returns
     -------
-    in_cache : bool
+    bool
         `True` if a download from ``url_key`` is in the cache
     """
-    # The code below is modified from astropy.utils.data.download_file()
     try:
-        with _cache() as (dldir, urlmapfn):
-            try:
-                with shelve.open(urlmapfn, flag="r") as url2hash:
-                    return url_key in url2hash
-            except dbm.error:
-                # The shelve doesn't exist or is damaged
-                return False
+        with _cache() as (dldir, url2hash):
+            return url_key in url2hash
     except OSError as e:
         msg = 'Remote data cache could not be accessed due to '
         estr = '' if len(e.args) < 1 else (': ' + str(e))
@@ -1151,16 +1141,20 @@ def is_url_in_cache(url_key):
         return False
 
 
-def _do_download_files_in_parallel(args):
-    return download_file(*args)
+def _do_download_files_in_parallel(kwargs):
+    return download_file(**kwargs)
 
 
-def download_files_in_parallel(urls, cache=True, show_progress=True,
-                               timeout=None):
-    """
-    Downloads multiple files in parallel from the given URLs.  Blocks until
-    all files have downloaded.  The result is a list of local file paths
-    corresponding to the given urls.
+def download_files_in_parallel(urls,
+                               cache=True,
+                               show_progress=True,
+                               timeout=None,
+                               sources=None,
+                               update_cache=False):
+    """Download multiple files in parallel from the given URLs.
+
+    Blocks until all files have downloaded.  The result is a list of
+    local file paths corresponding to the given urls.
 
     Parameters
     ----------
@@ -1168,7 +1162,8 @@ def download_files_in_parallel(urls, cache=True, show_progress=True,
         The URLs to retrieve.
 
     cache : bool, optional
-        Whether to use the cache (default is `True`).
+        Whether to use the cache (default is `True`). If you want to check
+        for new versions on the internet, use the update_cache option.
 
         .. versionchanged:: 3.0
             The default was changed to ``True`` and setting it to ``False`` will
@@ -1183,6 +1178,19 @@ def download_files_in_parallel(urls, cache=True, show_progress=True,
         Timeout for each individual requests in seconds (default is the
         configurable `astropy.utils.data.Conf.remote_timeout`).
 
+    sources : dict, optional
+        If provided, for each URL a list of URLs to try to obtain the
+        file from. The result will be stored under the original URL.
+        For any URL in this dictionary, the original URL will *not* be
+        tried unless it is in this list; this is to prevent long waits
+        for a primary server that is known to be inaccessible at the
+        moment.
+
+    update_cache : bool, optional
+        If true, attempt to download the file anew; if this is successful
+        replace the current version. If not, raise a URLError but leave
+        the existing cached value intact.
+
     Returns
     -------
     paths : list of str
@@ -1192,16 +1200,20 @@ def download_files_in_parallel(urls, cache=True, show_progress=True,
 
     if timeout is None:
         timeout = conf.remote_timeout
+    if sources is None:
+        sources = {}
 
     if not cache:
         # See issue #6662, on windows won't work because the files are removed
         # again before they can be used. On *NIX systems it will behave as if
         # cache was set to True because multiprocessing cannot insert the items
-        # in the list of to-be-removed files.
+        # in the list of to-be-removed files. This could be fixed, but really,
+        # just use the cache, with update_cache if appropriate.
         warn("Disabling the cache does not work because of multiprocessing, it "
              "will be set to ``True``. You may need to manually remove the "
-             "cached files afterwards.", AstropyWarning)
+             "cached files with clear_download_cache() afterwards.", AstropyWarning)
         cache = True
+        update_cache = True
 
     if show_progress:
         progress = sys.stdout
@@ -1212,7 +1224,13 @@ def download_files_in_parallel(urls, cache=True, show_progress=True,
     combined_urls = list(set(urls))
     combined_paths = ProgressBar.map(
         _do_download_files_in_parallel,
-        [(x, cache, False, timeout) for x in combined_urls],
+        [dict(remote_url=u,
+              cache=cache,
+              show_progress=False,
+              timeout=timeout,
+              sources=sources.get(u, [u]),
+              update_cache=update_cache)
+         for u in combined_urls],
         file=progress,
         multiprocess=True)
     paths = []
@@ -1254,40 +1272,40 @@ def clear_download_cache(hashorurl=None):
     """
 
     try:
-        with _cache(write=True) as (dldir, urlmapfn):
+        with _cache(write=True) as (dldir, url2hash):
             if hashorurl is None:
                 if os.path.exists(dldir):
                     shutil.rmtree(dldir)
             else:
-                with shelve.open(urlmapfn, flag="c") as url2hash:
-                    try:
-                        filepath = url2hash.pop(hashorurl)
-                        if not any(v == filepath for v in url2hash.values()):
-                            try:
-                                os.unlink(filepath)
-                            except FileNotFoundError:
-                                # Maybe someone else got it first
-                                pass
-                        return
-                    except KeyError:
-                        pass
-                    if hash_re.match(hashorurl):
-                        filepath = os.path.join(dldir, hashorurl)
-                    else:
-                        filepath = hashorurl
-                    if not _is_inside(filepath, dldir):
-                        # Should this be ValueError? IOError?
-                        raise RuntimeError("attempted to use clear_download_cache on"
-                                           " a path outside the data cache directory")
-                    if os.path.exists(filepath):
-                        for k, v in url2hash.items():
-                            if v == filepath:
-                                del url2hash[k]
-                        os.unlink(filepath)
-                        return
-                    # Otherwise could not find file or url, but no worries.
-                    # Clearing download cache just makes sure that the file or url
-                    # is no longer in the cache regardless of starting condition.
+                try:
+                    filepath = url2hash.pop(hashorurl)
+                    if not any(v == filepath for v in url2hash.values()):
+                        try:
+                            os.unlink(filepath)
+                        except FileNotFoundError:
+                            # Maybe someone else got it first
+                            pass
+                    return
+                except KeyError:
+                    pass
+                filepath = os.path.join(dldir, hashorurl)
+                if not _is_inside(filepath, dldir):
+                    # URLs look like they are insided the directory
+                    # Should this be ValueError? IOError?
+                    raise RuntimeError(
+                        "attempted to use clear_download_cache on the path {} "
+                        "outside the data cache directory {}"
+                        .format(filepath, dldir)
+                    )
+                if os.path.exists(filepath):
+                    for k, v in url2hash.items():
+                        if v == filepath:
+                            del url2hash[k]
+                    os.unlink(filepath)
+                    return
+                # Otherwise could not find file or url, but no worries.
+                # Clearing download cache just makes sure that the file or url
+                # is no longer in the cache regardless of starting condition.
     except OSError as e:
         msg = 'Not clearing data cache - cache inacessable due to '
         estr = '' if len(e.args) < 1 else (': ' + str(e))
@@ -1411,6 +1429,7 @@ def _cache_lock_write():
             # or something went wrong before creating the directory
             pass
 
+
 @contextlib.contextmanager
 def _cache(write=False):
     # FIXME: reader-writer lock would be better
@@ -1418,13 +1437,25 @@ def _cache(write=False):
     # is working then Bad Things will happen. But in any case the
     # API uses filenames so clear_download cache can disappear
     # them out from under users.
+
     dldir, urlmapfn = _get_download_cache_locs()
     # raises an error if cache inaccessible
-    if write:
-        with _cache_lock_write():
-            yield dldir, urlmapfn
-    else:
-        yield dldir, urlmapfn
+    lock_wrapper = _cache_lock_write if write else contextlib.nullcontext
+    with lock_wrapper():
+        if write:
+            with shelve.open(urlmapfn, flag="c") as url2hash:
+                yield dldir, url2hash
+        else:
+            try:
+                with shelve.open(urlmapfn, flag="r") as url2hash:
+                    d = dict(url2hash.items())
+            except dbm.error:
+                # Might be a "file not found", might be something serious,
+                # no way to tell as shelve just gives you a plain dbm.error
+                # Also the file doesn't have a platform-independent name
+                d = {}
+            yield dldir, d
+
 
 def check_download_cache(check_hashes=False):
     """Do a consistency check on the cache
@@ -1442,7 +1473,7 @@ def check_download_cache(check_hashes=False):
     particularly those that 32-character hex strings or start with those,
     probably indicates that something has gone wrong and inaccessible files
     have accumulated in the cache. These can be removed with
-    `clear_download_cache`, either passking the filename returned here, or
+    `clear_download_cache`, either passing the filename returned here, or
     with no arguments to  empty the entire cache and return it to a
     reasonable, if empty, state.
 
@@ -1454,7 +1485,7 @@ def check_download_cache(check_hashes=False):
     """
     # We're only reading but without the lock goodness knows what
     # inconsistencies might be detected
-    with _cache(write=True) as (dldir, urlmapfn):
+    with _cache(write=True) as (dldir, url2hash):
         hash_files = set(os.path.join(dldir, k)
                          for k in os.listdir(dldir))
         try:
@@ -1465,31 +1496,30 @@ def check_download_cache(check_hashes=False):
             hash_files.remove(os.path.join(dldir, "lock"))
         except KeyError:
             raise ValueError("Lock file missing!?")
-        with shelve.open(urlmapfn, flag="c") as url2hash:
-            for u, h in url2hash.items():
-                if not os.path.exists(h):
-                    msg = "URL '{}' points to nonexistent file '{}'".format(
-                            u, h)
+        for u, h in url2hash.items():
+            if not os.path.exists(h):
+                msg = "URL '{}' points to nonexistent file '{}'".format(
+                        u, h)
+                raise ValueError(msg)
+            try:
+                hash_files.remove(h)
+            except KeyError:
+                # Huh. Two different URLs retrieved identical files.
+                pass
+            d, hexdigest = os.path.split(h)
+            if dldir != d:
+                msg = "Expected downloaded files to be in '{}' but " +\
+                      "URL '{}' points to file '{}'".format(
+                              dldir, u, h)
+                raise ValueError(msg)
+            if check_hashes:
+                hexdigest_file = compute_hash(h)
+                if hexdigest_file != hexdigest:
+                    msg = "File corresponding to {} has contents that " +\
+                          "do not match the hash value: should be '{}' " +\
+                          "but is '{}'".format(
+                                  u, hexdigest, hexdigest_file)
                     raise ValueError(msg)
-                try:
-                    hash_files.remove(h)
-                except KeyError:
-                    # Huh. Two different URLs retrieved identical files.
-                    pass
-                d, hexdigest = os.path.split(h)
-                if dldir != d:
-                    msg = "Expected downloaded files to be in '{}' but " +\
-                          "URL '{}' points to file '{}'".format(
-                                  dldir, u, h)
-                    raise ValueError(msg)
-                if check_hashes:
-                    hexdigest_file = compute_hash(h)
-                    if hexdigest_file != hexdigest:
-                        msg = "File corresponding to {} has contents that " +\
-                              "do not match the hash value: should be '{}' " +\
-                              "but is '{}'".format(
-                                      u, hexdigest, hexdigest_file)
-                        raise ValueError(msg)
     return hash_files
 
 
@@ -1499,23 +1529,21 @@ def _import_to_cache(url_key, filename,
     """Import the on-disk file specified by filename to the cache"""
     if hexdigest is None:
         hexdigest = compute_hash(filename)
-    with _cache(write=True) as (dldir, urlmapfn):
-        with shelve.open(urlmapfn, "c") as url2hash:
-            # We check now to see if another process has
-            # inadvertently written the file underneath us
-            # already
-            if url_key in url2hash:
-                # FIXME: how to test this collision?
-                # We'd probably need to mock urllib with sufficient
-                # deviousness.
-                return url2hash[url_key]
+    with _cache(write=True) as (dldir, url2hash):
+        # We check now to see if another process has
+        # inadvertently written the file underneath us
+        # already
+        if url_key not in url2hash:
             local_path = os.path.join(dldir, hexdigest)
             if remove_original:
                 shutil.move(filename, local_path)
             else:
                 shutil.copy(filename, local_path)
             url2hash[url_key] = local_path
-    return local_path
+        else:
+            if remove_original:
+                os.remove(filename)
+        return url2hash[url_key]
 
 
 def get_cached_urls():
@@ -1528,19 +1556,14 @@ def get_cached_urls():
     cached_urls : list
         List of cached URLs.
     """
-    # The code below is modified from astropy.utils.data.download_file()
     try:
-        with _cache() as (dldir, urlmapfn):
-            try:
-                with shelve.open(urlmapfn, "r") as url2hash:
-                    return list(url2hash.keys())
-            except dbm.error as e:
-                raise IOError("Remote data cache somehow damaged") from e
+        with _cache() as (dldir, url2hash):
+            return list(url2hash.keys())
     except OSError as e:
         msg = 'Remote data cache could not be accessed due to '
         estr = '' if len(e.args) < 1 else (': ' + str(e))
         warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
-        return False
+        return []
 
 
 _cache_zip_index_name = "index.json"

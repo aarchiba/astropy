@@ -693,10 +693,10 @@ class ProgressBar:
     @classmethod
     def map(cls, function, items, multiprocess=False, file=None, step=100,
             ipython_widget=False):
-        """
-        Does a `map` operation while displaying a progress bar with
-        percentage complete. The map operation may run on arbitrary order
-        on the items, but the results are returned in sequential order.
+        """Map function over items while displaying a progress bar with percentage complete.
+
+        The map operation may run in arbitrary order on the items, but the results are
+        returned in sequential order.
 
         ::
 
@@ -735,6 +735,7 @@ class ProgressBar:
             of the chunks of ``items`` that are submitted as separate tasks
             to the process pool.  A large step size may make the job
             complete faster if ``items`` is very long.
+
         """
 
         if multiprocess:
@@ -754,7 +755,8 @@ class ProgressBar:
     @classmethod
     def map_unordered(cls, function, items, multiprocess=False, file=None,
                       step=100, ipython_widget=False):
-        """
+        """Map function over items, reporting the progress.
+
         Does a `map` operation while displaying a progress bar with
         percentage complete. The map operation may run on arbitrary order
         on the items, and the results may be returned in arbitrary order.
