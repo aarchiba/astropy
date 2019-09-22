@@ -185,7 +185,7 @@ cache directory itself is somewhat portable between machines of the same UNIX
 flavour; this may be sufficient if you can persuade your CI system to cache hte
 directory between runs. For greater portability, though, you can simply use
 `~astropy.utils.data.export_download_cache` and
-`~astropy.utils.cache.import_download_cache`, which are portable and will allow
+`~astropy.utils.data.import_download_cache`, which are portable and will allow
 adding files to an existing cache directory.
 
 If your application needs IERS data specifically, you can download the
