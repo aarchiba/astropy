@@ -12,7 +12,6 @@ import os
 import io
 import json
 import pathlib
-import re
 import shutil
 import socket
 import sys
@@ -30,17 +29,25 @@ from astropy import config as _config
 from astropy.utils.exceptions import AstropyWarning
 from astropy.utils.introspection import find_current_module, resolve_name
 
+# Order here determines order in the autosummary
 __all__ = [
-    'Conf', 'conf', 'get_readable_fileobj', 'get_file_contents',
+    'Conf', 'conf',
+    'download_file', 'download_files_in_parallel',
     'get_pkg_data_fileobj', 'get_pkg_data_filename',
     'get_pkg_data_contents', 'get_pkg_data_fileobjs',
-    'get_pkg_data_filenames', 'compute_hash', 'clear_download_cache',
-    'CacheMissingWarning', 'get_free_space_in_dir',
-    'check_free_space_in_dir', 'download_file',
-    'download_files_in_parallel', 'is_url_in_cache', 'get_cached_urls',
-    'export_download_cache', 'import_download_cache', 'check_download_cache',
-    'cache_contents', 'cache_total_size',
-    ]
+    'get_pkg_data_filenames',
+    'is_url_in_cache', 'get_cached_urls',
+    'cache_total_size', 'cache_contents',
+    'export_download_cache', 'import_download_cache',
+    'check_download_cache',
+    'clear_download_cache',
+    'compute_hash',
+    'get_free_space_in_dir',
+    'check_free_space_in_dir',
+    'get_readable_fileobj',
+    'get_file_contents',
+    'CacheMissingWarning',
+]
 
 _dataurls_to_alias = {}
 
@@ -1038,7 +1045,6 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
             update_cache = False
             missing_cache = True  # indicates that the cache is missing to raise a warning later
 
-
     errors = {}
     for source_url in sources:
         try:
@@ -1148,10 +1154,12 @@ def is_url_in_cache(url_key):
         warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
         return False
 
+
 def cache_total_size():
     """Return the total size in bytes of all files in the cache."""
     with _cache() as (dldir, url2hash):
-        return sum(os.path.getsize(os.path.join(dldir,h)) for h in url2hash.values())
+        return sum(os.path.getsize(os.path.join(dldir, h)) for h in url2hash.values())
+
 
 def _do_download_files_in_parallel(kwargs):
     return download_file(**kwargs)
@@ -1267,8 +1275,6 @@ def _deltemps():
             if os.path.isfile(fn):
                 os.remove(fn)
 
-
-hash_re = re.compile("[0-9a-f]+")
 
 def clear_download_cache(hashorurl=None):
     """Clears the data file cache by deleting the local file(s).
@@ -1588,7 +1594,7 @@ def get_cached_urls():
 def cache_contents():
     """Obtain a dict mapping cached URLs to filenames."""
     with _cache() as (dldir, url2hash):
-        return {k:os.path.join(dldir, v) for (k,v) in url2hash.items()}
+        return {k: os.path.join(dldir, v) for (k, v) in url2hash.items()}
 
 
 _cache_zip_index_name = "index.json"

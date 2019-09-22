@@ -52,7 +52,7 @@ else:
 def preserve_cache(clear=False, check=False):
     """Allow tests to operate without wiping existing cache"""
     with TemporaryDirectory() as d:
-        zip_file_name = os.path.join(d,"cache.zip")
+        zip_file_name = os.path.join(d, "cache.zip")
         with open(zip_file_name, "wb") as zip_file:
             export_download_cache(zip_file)
         try:
@@ -82,17 +82,18 @@ def test_download_parallel():
         fnout = download_files_in_parallel([mirror_url, mirror_url + fileloc])
     assert all([os.path.isfile(f) for f in fnout]), fnout
 
+
 def test_download_parallel_with_sources():
     with make_url("a", delete=False) as a, \
          make_url("b", delete=False) as b, \
          make_url("c", delete=False) as c, \
-         make_url("d",delete=True) as d, \
-         make_url("e",delete=True) as e, \
-         make_url("f",delete=True) as f:
+         make_url("d", delete=True) as d, \
+         make_url("e", delete=True) as e, \
+         make_url("f", delete=True) as f:
         for u in [a, b, c, d, e, f]:
             clear_download_cache(u)
-        sources = {b : [d,b], c : [e,f,c], d : [d,e,f]}
-        urls = [a,b,c]
+        sources = {b: [d, b], c: [e, f, c], d: [d, e, f]}
+        urls = [a, b, c]
         with pytest.raises(IOError):
             r = download_files_in_parallel([d], sources=sources)
         r = download_files_in_parallel(urls, sources=sources)
@@ -104,13 +105,14 @@ def test_download_parallel_with_sources():
     for u in [a, b, c, d, e, f]:
         clear_download_cache(u)
 
+
 def test_download_parallel_many(tmpdir):
     n = 100
     td = []
     for i in range(n):
         c = "%04d" % i
         fn = os.path.join(tmpdir, c)
-        with open(fn,"w") as f:
+        with open(fn, "w") as f:
             f.write(c)
         u = url_to(fn)
         clear_download_cache(u)
@@ -123,13 +125,14 @@ def test_download_parallel_many(tmpdir):
             assert f.read() == c
         clear_download_cache(u)
 
+
 def test_download_parallel_partial_success(tmpdir):
     n = 100
     td = []
     for i in range(n):
         c = "%04d" % i
         fn = os.path.join(tmpdir, c)
-        with open(fn,"w") as f:
+        with open(fn, "w") as f:
             f.write(c)
         u = url_to(fn)
         clear_download_cache(u)
@@ -145,13 +148,14 @@ def test_download_parallel_partial_success(tmpdir):
     for (fn, u, c) in td:
         clear_download_cache(u)
 
+
 def test_download_parallel_update(tmpdir):
     n = 100
     td = []
     for i in range(n):
         c = "%04d" % i
         fn = os.path.join(tmpdir, c)
-        with open(fn,"w") as f:
+        with open(fn, "w") as f:
             f.write(c)
         u = url_to(fn)
         clear_download_cache(u)
@@ -163,7 +167,7 @@ def test_download_parallel_update(tmpdir):
     for (fn, u, c) in td:
         c_plus = c + " updated"
         fn = os.path.join(tmpdir, c)
-        with open(fn,"w") as f:
+        with open(fn, "w") as f:
             f.write(c_plus)
         td2.append((fn, u, c, c_plus))
 
@@ -178,6 +182,7 @@ def test_download_parallel_update(tmpdir):
         assert get_file_contents(r_3) == c_plus
         clear_download_cache(u)
 
+
 def url_to(path):
     return pathlib.Path(path).resolve().as_uri()
 
@@ -189,9 +194,9 @@ def test_clear_download_multiple_references(tmpdir):
     d = tmpdir
 
     # First ensure that there is no file with these contents in the cache
-    a_name = os.path.join(d,"a")
-    f_name = os.path.join(d,"f")
-    g_name = os.path.join(d,"g")
+    a_name = os.path.join(d, "a")
+    f_name = os.path.join(d, "f")
+    g_name = os.path.join(d, "g")
 
     with open(a_name, "w") as a:
         a.write(content)
@@ -231,7 +236,7 @@ def test_clear_download_multiple_references(tmpdir):
 @contextlib.contextmanager
 def make_url(contents, delete=True):
     with TemporaryDirectory() as d:
-        f_name = os.path.join(d,contents)
+        f_name = os.path.join(d, contents)
         with open(f_name, "w") as f:
             f.write(contents)
         url = url_to(f.name)
@@ -241,11 +246,13 @@ def make_url(contents, delete=True):
     if delete:
         yield url
 
+
 def test_download_file_basic():
     with make_url("primary", delete=False) as primary:
         fn = download_file(primary, cache=False)
         with open(fn) as f:
             assert f.read() == "primary"
+
 
 def test_sources_normal():
     with make_url("primary", delete=False) as primary:
@@ -288,21 +295,21 @@ def test_sources_multiple():
 
 
 def test_sources_multiple_missing():
-    with make_url("primary", delete=True) as primary:
-        with make_url("fallback1", delete=True) as fallback1:
-            with make_url("fallback2", delete=True) as fallback2:
-                with pytest.raises(urllib.error.URLError):
-                    f = download_file(primary, cache=True,
-                                      sources=[primary,
-                                               fallback1,
-                                               fallback2])
-                assert not is_url_in_cache(fallback1)
-                assert not is_url_in_cache(fallback2)
+    with make_url("primary", delete=True) as primary, \
+         make_url("fallback1", delete=True) as fallback1, \
+         make_url("fallback2", delete=True) as fallback2:
+        with pytest.raises(urllib.error.URLError):
+            download_file(primary, cache=True,
+                          sources=[primary,
+                                   fallback1,
+                                   fallback2])
+        assert not is_url_in_cache(fallback1)
+        assert not is_url_in_cache(fallback2)
 
 
 def test_update_url():
     with TemporaryDirectory() as d:
-        f_name = os.path.join(d,"f")
+        f_name = os.path.join(d, "f")
         with open(f_name, "w") as f:
             f.write("old")
         f_url = url_to(f.name)
@@ -813,12 +820,11 @@ def test_cache_size_changes_correctly_when_files_are_added_and_removed(tmpdir):
     # Random bytes so we won't have a hash collision
     n = os.path.join(tmpdir, "random")
     u = url_to(n)
-    with open(n,"wb") as f:
-       f.write(b)
+    with open(n, "wb") as f:
+        f.write(b)
     clear_download_cache(u)
     s_i = cache_total_size()
     download_file(u, cache=True)
     assert cache_total_size() == s_i + len(b)
     clear_download_cache(u)
     assert cache_total_size() == s_i
-

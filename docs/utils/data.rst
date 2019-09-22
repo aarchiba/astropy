@@ -1,8 +1,8 @@
 .. _utils-data:
 
-*************************************************
-Downloaded data management (`astropy.utils.iers`)
-*************************************************
+***************************************************
+Downloadable data management (`astropy.utils.data`)
+***************************************************
 
 Introduction
 ============
@@ -15,7 +15,7 @@ data - authoritative data made available on the Web, and possibly updated
 from time to time - is reasonably common in astronomy. Astropy therefore
 provides some tools for working with such data.
 
-The primary tool for this is the astopy *cache*. This is a repository
+The primary tool for this is the Astropy *cache*. This is a repository
 of downloaded data, indexed by the URL where it was obtained. The tool
 `~astropy.utils.data.download_file` and various other things built upon
 it can use this cache to request the contents of a URL, and (if they
@@ -50,14 +50,14 @@ irregularity of the Earth's rotation) probably triggers a download of the
 IERS data::
 
    >>> from astropy.time import Time
-   >>> Time.now().ut1
+   >>> Time.now().ut1  # doctest: +SKIP
    Downloading https://maia.usno.navy.mil/ser7/finals2000A.all
-   |=================================================================================| 3.2M/3.2M (100.00%)         1s
+   |============================================| 3.2M/3.2M (100.00%)         1s
    <Time object: scale='ut1' format='datetime' value=2019-09-22 08:39:03.812731>
 
 But running it a second time doesn't require any new download::
 
-   >>> Time.now().ut1
+   >>> Time.now().ut1  # doctest: +SKIP
    <Time object: scale='ut1' format='datetime' value=2019-09-22 08:41:21.588836>
 
 Some data is also made available from the `Astropy data server`_ either
@@ -65,7 +65,7 @@ for use within astropy or for your convenience. These are available more
 conveniently with the ``get_pkg_data_*`` functions::
 
    >>> from astropy.utils.data import get_pkg_data_contents
-   >>> print(get_pkg_data_contents("coordinates/sites-un-ascii"))
+   >>> print(get_pkg_data_contents("coordinates/sites-un-ascii"))  # doctest: +SKIP
    # these are all mappings from the name in sites.json (which is ASCII-only) to the "true" unicode names
    TUBITAK->TÜBİTAK
 
@@ -79,8 +79,8 @@ argument to obtain their data, from the cache if the data is
 there::
 
    >>> from astropy.utils.iers import IERS_B_URL, IERS_B
-   >>> from astropy.utils.data import get_pkg_data_contents
-   >>> IERS_B.open(download_file(IERS_B_URL, cache=True))["year","month","day"][-3:]
+   >>> from astropy.utils.data import download_file
+   >>> IERS_B.open(download_file(IERS_B_URL, cache=True))["year","month","day"][-3:]  # doctest: +SKIP
     <IERS_B length=3>
     year month  day
    int64 int64 int64
@@ -94,9 +94,12 @@ data (note that here the data was already up to date; users
 will have to decide for themselves when to obtain new versions),
 they can use the ``update_cache`` argument::
 
-   >>> IERS_B.open(download_file(IERS_B_URL, cache=True, update_cache=True))["year","month","day"][-3:]
+   >>> IERS_B.open(download_file(IERS_B_URL,
+   ...                           cache=True,
+   ...                           update_cache=True)
+   ... )["year","month","day"][-3:]  # doctest: +SKIP
    Downloading http://hpiers.obspm.fr/iers/eop/eopc04/eopc04_IAU2000.62-now
-   |=================================================================================| 3.2M/3.2M (100.00%)         0s
+   |=========================================| 3.2M/3.2M (100.00%)         0s
    <IERS_B length=3>
     year month  day
    int64 int64 int64
@@ -114,9 +117,9 @@ will be stored in the cache under the original URL requested::
    >>> f = download_file("ftp://ssd.jpl.nasa.gov/pub/eph/planets/bsp/de405.bsp",
    ...     cache=False,
    ...     sources=['https://data.nanograv.org/static/data/ephem/de405.bsp',
-   ...              'ftp://ssd.jpl.nasa.gov/pub/eph/planets/bsp/de405.bsp'])
+   ...              'ftp://ssd.jpl.nasa.gov/pub/eph/planets/bsp/de405.bsp'])  # doctest: +SKIP
    Downloading ftp://ssd.jpl.nasa.gov/pub/eph/planets/bsp/de405.bsp from https://data.nanograv.org/static/data/ephem/de405.bsp
-   |=================================================================================|  65M/ 65M (100.00%)        19s
+   |========================================|  65M/ 65M (100.00%)        19s
 
 .. _Astropy data server: http://www.astropy.org/astropy-data/
 
@@ -127,8 +130,8 @@ Because the cache is persistent, it is possible for it to become
 inconveniently large, or become filled with no-longer-relevant data. While
 it is simply a directory on disk, each file is supposed to represent
 the contents of a URL, and many URLs do not make acceptable on-disk
-filenames. There is also concern that multiple astropy processes accessing
-the cache simultaneous might lead to cache corruption. The cache is
+filenames. There is reason to worry that multiple astropy processes accessing
+the cache simultaneously might lead to cache corruption. The cache is
 therefore protected by a lock and indexed by a persistent dictionary
 mapping URLs to hashes of the file contents, while the file contents are
 stored in files named by their hashes. So access to the cache is easier
@@ -154,9 +157,9 @@ carried out using `~astropy.utils.data.cache_contents`, which returns a
 dict mapping URLs to on-disk filenames of their contents.
 
 If you want to transfer the cache to another computer, or preserve its contents
-for later use, you can use the functions `~astropy.utils.data.export_cache` to
+for later use, you can use the functions `~astropy.utils.data.export_download_cache` to
 produce a zipfile listing some or all of the cache contents, and
-`~astropy.utils.data.import_cache` to load the astropy cache from such a
+`~astropy.utils.data.import_download_cache` to load the astropy cache from such a
 zipfile.
 
 Using Astropy With Limited or No Internet Access
@@ -181,17 +184,18 @@ by copying via an intermediate machine, sneakernet, or carrier pigeon. The
 cache directory itself is somewhat portable between machines of the same UNIX
 flavour; this may be sufficient if you can persuade your CI system to cache hte
 directory between runs. For greater portability, though, you can simply use
-`~astropy.utils.cache.export_cache` and `~astropy.utils.cache.import_cache`,
-which are portable and will allow adding files to an existing cache directory.
+`~astropy.utils.data.export_download_cache` and
+`~astropy.utils.cache.import_download_cache`, which are portable and will allow
+adding files to an existing cache directory.
 
 If your application needs IERS data specifically, you can download the
 appropriate IERS table, covering the appropriate time span, by any means you
 find convenient. You can then load this file into your application and use the
 resulting table rather than `~astropy.utils.iers.IERS_Auto`. In fact, the IERS
 B table is small enough that a version (not necessarily recent) is bundled with
-Astropy as `~astropy.utils.iers.IERS_B_FILE`. Using a specific non-automatic
+Astropy as ``astropy.utils.iers.IERS_B_FILE``. Using a specific non-automatic
 table also has the advantage of giving you control over exactly which version
-of the IERS data your application is using.
+of the IERS data your application is using. See also :ref:`iers-working-offline`.
 
 If your issue is with certain specific servers, even if they are the ones
 Astropy normally uses, if you can anticipate exactly which files will be needed
