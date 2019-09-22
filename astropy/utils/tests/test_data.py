@@ -676,6 +676,7 @@ def test_is_url_in_cache_remote():
     download_file(TESTURL, cache=True, show_progress=False)
     assert is_url_in_cache(TESTURL)
 
+
 def test_is_url_in_cache_local(tmpdir):
 
     with paths.set_temp_cache(tmpdir), \
@@ -696,8 +697,9 @@ def test_check_download_cache(tmpdir):
             paths.set_temp_cache(tmpdir), \
             NamedTemporaryFile("wb") as zip_file:
         clear_download_cache()
-        assert not check_download_cache()
+        check_download_cache()
         download_file(testurl, cache=True)
+        # normal files probably corresponding to the urlmap
         normal = check_download_cache()
         download_file(testurl2, cache=True)
         assert check_download_cache() == normal

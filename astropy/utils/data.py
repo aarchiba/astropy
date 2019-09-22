@@ -1215,6 +1215,13 @@ def download_files_in_parallel(urls,
     -------
     paths : list of str
         The local file paths corresponding to the downloaded URLs.
+
+    Note
+    ----
+    If a URL is unreachable, the downloading will grind to a halt and the
+    exception will propagate upward, but an unpredictable number of
+    files will have been successfully downloaded and will remain in
+    the cache.
     """
     from .console import ProgressBar
 
@@ -1273,7 +1280,12 @@ def _deltemps():
         while len(_tempfilestodel) > 0:
             fn = _tempfilestodel.pop()
             if os.path.isfile(fn):
-                os.remove(fn)
+                try:
+                    os.remove(fn)
+                except OSError:
+                    # oh well we tried
+                    # could be held open by some process, on Windows
+                    pass
 
 
 def clear_download_cache(hashorurl=None):
@@ -1294,7 +1306,7 @@ def clear_download_cache(hashorurl=None):
             if hashorurl is None:
                 if os.path.exists(dldir):
                     shutil.rmtree(dldir)
-            elif urllib.parse.urlparse(hashorurl).scheme != "":
+            elif _is_url(hashorurl):
                 try:
                     filepath = url2hash.pop(hashorurl)
                     if not any(v == filepath for v in url2hash.values()):
@@ -1327,7 +1339,7 @@ def clear_download_cache(hashorurl=None):
                 # Clearing download cache just makes sure that the file or url
                 # is no longer in the cache regardless of starting condition.
     except OSError as e:
-        msg = 'Not clearing data cache - cache inacessable due to '
+        msg = 'Not clearing data cache - cache inacessible due to '
         estr = '' if len(e.args) < 1 else (': ' + str(e))
         warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
         return
@@ -1662,7 +1674,10 @@ def import_download_cache(filename_or_obj, urls=None):
             if is_url_in_cache(k):
                 continue
             v = index[k]
-            with NamedTemporaryFile("wb") as f_temp:
+            with NamedTemporaryFile(
+                mode="wb",
+                prefix="astropy-download-{}-".format(os.getpid),
+            ) as f_temp:
                 with z.open(v) as f_zip:
                     hash = hashlib.md5()
                     block = f_zip.read(block_size)
