@@ -31,8 +31,6 @@ TESTURL = 'http://www.astropy.org'
 TESTURL2 = "http://www.astropy.org/about.html"
 TESTLOCAL = get_pkg_data_filename(os.path.join('data', 'local.dat'))
 
-# General file object function
-
 try:
     import bz2  # noqa
 except ImportError:
@@ -47,6 +45,7 @@ except ImportError:
 else:
     HAS_XZ = True
 
+n_parallel_hammer = 10
 
 def url_to(path):
     return pathlib.Path(path).resolve().as_uri()
@@ -111,7 +110,7 @@ def test_download_parallel_with_sources():
 
 
 def test_download_parallel_many(tmpdir):
-    n = 100
+    n = n_parallel_hammer
     td = []
     for i in range(n):
         c = "%04d" % i
@@ -131,7 +130,7 @@ def test_download_parallel_many(tmpdir):
 
 
 def test_download_parallel_partial_success(tmpdir):
-    n = 100
+    n = n_parallel_hammer
     td = []
     for i in range(n):
         c = "%04d" % i
@@ -155,7 +154,7 @@ def test_download_parallel_partial_success(tmpdir):
 
 
 def test_download_parallel_update(tmpdir):
-    n = 100
+    n = n_parallel_hammer
     td = []
     for i in range(n):
         c = "%04d" % i
@@ -583,7 +582,7 @@ def test_data_noastropy_fallback(monkeypatch):
     w3 = w.pop()
 
     assert w3.category == data.CacheMissingWarning
-    assert 'Not clearing data cache - cache inacessable' in str(w3.message)
+    assert 'Not clearing data cache - cache inacessible' in str(w3.message)
 
     # now try with no cache
     with catch_warnings(CacheMissingWarning) as w:
