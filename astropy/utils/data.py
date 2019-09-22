@@ -39,6 +39,7 @@ __all__ = [
     'check_free_space_in_dir', 'download_file',
     'download_files_in_parallel', 'is_url_in_cache', 'get_cached_urls',
     'export_download_cache', 'import_download_cache', 'check_download_cache',
+    'cache_contents', 'cache_total_size',
     ]
 
 _dataurls_to_alias = {}
@@ -1048,7 +1049,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
                 info = remote.info()
                 try:
                     size = int(info['Content-Length'])
-                except (KeyError, ValueError):
+                except (KeyError, ValueError, TypeError):
                     size = None
 
                 if size is not None:
@@ -1062,7 +1063,10 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
                 else:
                     progress_stream = io.StringIO()
 
-                dlmsg = f"Downloading {remote_url}"
+                if source_url == remote_url:
+                    dlmsg = f"Downloading {remote_url}"
+                else:
+                    dlmsg = f"Downloading {remote_url} from {source_url}"
                 with ProgressBarOrSpinner(size, dlmsg, file=progress_stream) as p:
                     with NamedTemporaryFile(delete=False) as f:
                         try:
@@ -1130,6 +1134,10 @@ def is_url_in_cache(url_key):
     -------
     bool
         `True` if a download from ``url_key`` is in the cache
+
+    See Also
+    --------
+    cache_contents : obtain a dictionary listing everything in the cache
     """
     try:
         with _cache() as (dldir, url2hash):
@@ -1140,6 +1148,10 @@ def is_url_in_cache(url_key):
         warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
         return False
 
+def cache_total_size():
+    """Return the total size in bytes of all files in the cache."""
+    with _cache() as (dldir, url2hash):
+        return sum(os.path.getsize(os.path.join(dldir,h)) for h in url2hash.values())
 
 def _do_download_files_in_parallel(kwargs):
     return download_file(**kwargs)
@@ -1357,26 +1369,18 @@ def _get_download_cache_locs():
 # the cache directory must be locked before any writes are performed.  Same for
 # the hash shelve, so this should be used for both.
 #
-# FIXME: does everything work fine - including the shelve - if the cache is
-# read while another process writes it? Reads are currently completely
-# unprotected.
+# In fact the shelve, if you're using gdbm (the default on Linux), it can't
+# be open for reading if someone has it open for writing. So we need to lock
+# access to the shelve even for reading.
 @contextlib.contextmanager
-def _cache_lock_write():
-    # FIXME: reader-writer lock?
+def _cache_lock():
     lockdir = os.path.join(_get_download_cache_locs()[0], 'lock')
     pidfn = os.path.join(lockdir, 'pid')
     try:
         msg = ("Config file requests {} tries"
                .format(conf.download_cache_lock_attempts))
-        for tries in range(conf.download_cache_lock_attempts):
-            if tries:
-                # Wait to try again
-                # slightly random wait time to desynchronize retries?
-                # unfortunately multiprocessing uses fork() so
-                # subprocesses all see the same random seed
-                # could include threading.current_thread().ident as well
-                pid_based_random = hash(str(os.getpid()))*2.**sys.hash_info.width
-                time.sleep(1+0.1*pid_based_random)
+        waited = 0.
+        while True:
             try:
                 os.mkdir(lockdir)
             except OSError:
@@ -1386,20 +1390,20 @@ def _cache_lock_write():
                     # Could check if pid is os.getpid() and notify the user
                     # we deadlocked but it might be another thread in this process.
                     msg = (
-                        "Cache directory is locked by process {} after {} tries. "
+                        "Cache directory is locked by process {} after waiting {} s. "
                         "If this is not a running python process, delete the directory "
                         "\"{}\" and all its contents to break the lock."
-                        .format(pid, tries, lockdir)
+                        .format(pid, waited, lockdir)
                     )
                     # Somebody has the lock. So wait.
                 except (ValueError, IOError):
                     pid = None
                     msg = (
-                        "Cache lock exists but is in an inconsistent state after {} "
-                        "tries. This may indicate an astropy bug or that kill -9 "
+                        "Cache lock exists but is in an inconsistent state after "
+                        "{} s. This may indicate an astropy bug or that kill -9 "
                         "was used. If you want to unlock the cache remove the "
                         "directory or file \"{}\"."
-                        .format(tries, lockdir)
+                        .format(waited, lockdir)
                     )
                     # We could bail out here but there is a sliver of time during
                     # which the directory exists but the pidfile hasn't been created
@@ -1410,9 +1414,19 @@ def _cache_lock_write():
                 with open(pidfn, 'w') as f:
                     f.write(str(os.getpid()))
                 break
-        else:
-            # Never did get the lock.
-            raise RuntimeError(msg)
+            if waited < conf.download_cache_lock_attempts:
+                # Wait to try again
+                # slightly random wait time to desynchronize retries
+                # unfortunately multiprocessing uses fork() so
+                # subprocesses all see the same random seed
+                # could include threading.current_thread().ident as well
+                pid_based_random = hash(str(os.getpid()))/2.**sys.hash_info.width
+                dt = 0.05*(1+pid_based_random)
+                time.sleep(dt)
+                waited += dt
+            else:
+                # Never did get the lock.
+                raise RuntimeError(msg)
 
         yield
 
@@ -1434,29 +1448,28 @@ def _cache_lock_write():
 
 @contextlib.contextmanager
 def _cache(write=False):
-    # FIXME: reader-writer lock would be better
-    # specifically if clear_download_cache happens while a reader
+    # if clear_download_cache happens while a reader
     # is working then Bad Things will happen. But in any case the
     # API uses filenames so clear_download cache can disappear
-    # them out from under users.
+    # them out from under users well after we've exited any
+    # locking.
 
     dldir, urlmapfn = _get_download_cache_locs()
     # raises an error if cache inaccessible
-    lock_wrapper = _cache_lock_write if write else contextlib.nullcontext
-    with lock_wrapper():
-        if write:
-            with shelve.open(urlmapfn, flag="c") as url2hash:
-                yield dldir, url2hash
-        else:
-            try:
-                with shelve.open(urlmapfn, flag="r") as url2hash:
-                    d = dict(url2hash.items())
-            except dbm.error:
-                # Might be a "file not found", might be something serious,
-                # no way to tell as shelve just gives you a plain dbm.error
-                # Also the file doesn't have a platform-independent name
-                d = {}
-            yield dldir, d
+    if write:
+        with _cache_lock(), shelve.open(urlmapfn, flag="c") as url2hash:
+            yield dldir, url2hash
+    else:
+        try:
+            with _cache_lock(), shelve.open(urlmapfn, flag="r") as url2hash:
+                # Copy so we can release the lock.
+                d = dict(url2hash.items())
+        except dbm.error:
+            # Might be a "file not found", might be something serious,
+            # no way to tell as shelve just gives you a plain dbm.error
+            # Also the file doesn't have a platform-independent name
+            d = {}
+        yield dldir, d
 
 
 def check_download_cache(check_hashes=False):
@@ -1557,6 +1570,10 @@ def get_cached_urls():
     -------
     cached_urls : list
         List of cached URLs.
+
+    See Also
+    --------
+    cache_contents : obtain a dictionary listing everything in the cache
     """
     try:
         with _cache() as (dldir, url2hash):
@@ -1566,6 +1583,12 @@ def get_cached_urls():
         estr = '' if len(e.args) < 1 else (': ' + str(e))
         warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
         return []
+
+
+def cache_contents():
+    """Obtain a dict mapping cached URLs to filenames."""
+    with _cache() as (dldir, url2hash):
+        return {k:os.path.join(dldir, v) for (k,v) in url2hash.items()}
 
 
 _cache_zip_index_name = "index.json"

@@ -7,23 +7,24 @@ import base64
 import hashlib
 import pathlib
 import tempfile
+import warnings
 import contextlib
 import urllib.error
 import urllib.parse
 import urllib.request
-import warnings
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 import pytest
 
 from astropy.utils import data
 from astropy.config import paths
-from astropy.utils.data import (
-    CacheMissingWarning, conf, compute_hash, download_file, get_cached_urls,
-    is_url_in_cache, check_download_cache, clear_download_cache,
-    get_pkg_data_fileobj, get_readable_fileobj, export_download_cache,
-    get_pkg_data_contents, get_pkg_data_filename, import_download_cache,
-    _get_download_cache_locs, download_files_in_parallel)
+from astropy.utils.data import (CacheMissingWarning, conf, compute_hash, download_file,
+                                get_cached_urls, is_url_in_cache, cache_total_size,
+                                get_file_contents, check_download_cache, clear_download_cache,
+                                get_pkg_data_fileobj, get_readable_fileobj, export_download_cache,
+                                get_pkg_data_contents, get_pkg_data_filename,
+                                import_download_cache, _get_download_cache_locs,
+                                download_files_in_parallel)
 from astropy.tests.helper import raises, catch_warnings
 
 TESTURL = 'http://www.astropy.org'
@@ -81,6 +82,101 @@ def test_download_parallel():
         fnout = download_files_in_parallel([mirror_url, mirror_url + fileloc])
     assert all([os.path.isfile(f) for f in fnout]), fnout
 
+def test_download_parallel_with_sources():
+    with make_url("a", delete=False) as a, \
+         make_url("b", delete=False) as b, \
+         make_url("c", delete=False) as c, \
+         make_url("d",delete=True) as d, \
+         make_url("e",delete=True) as e, \
+         make_url("f",delete=True) as f:
+        for u in [a, b, c, d, e, f]:
+            clear_download_cache(u)
+        sources = {b : [d,b], c : [e,f,c], d : [d,e,f]}
+        urls = [a,b,c]
+        with pytest.raises(IOError):
+            r = download_files_in_parallel([d], sources=sources)
+        r = download_files_in_parallel(urls, sources=sources)
+
+    assert len(r) == len(urls)
+    assert get_file_contents(r[0]) == "a"
+    assert get_file_contents(r[1]) == "b"
+    assert get_file_contents(r[2]) == "c"
+    for u in [a, b, c, d, e, f]:
+        clear_download_cache(u)
+
+def test_download_parallel_many(tmpdir):
+    n = 100
+    td = []
+    for i in range(n):
+        c = "%04d" % i
+        fn = os.path.join(tmpdir, c)
+        with open(fn,"w") as f:
+            f.write(c)
+        u = url_to(fn)
+        clear_download_cache(u)
+        td.append((fn, u, c))
+
+    r = download_files_in_parallel([u for (fn, u, c) in td])
+    assert len(r) == len(td)
+    for r, (fn, u, c) in zip(r, td):
+        with open(r) as f:
+            assert f.read() == c
+        clear_download_cache(u)
+
+def test_download_parallel_partial_success(tmpdir):
+    n = 100
+    td = []
+    for i in range(n):
+        c = "%04d" % i
+        fn = os.path.join(tmpdir, c)
+        with open(fn,"w") as f:
+            f.write(c)
+        u = url_to(fn)
+        clear_download_cache(u)
+        td.append((fn, u, c))
+
+    u_bad = url_to(os.path.join(tmpdir, "nonexistent"))
+
+    with pytest.raises(urllib.request.URLError):
+        download_files_in_parallel([u_bad] + [u for (fn, u, c) in td])
+    # Actually some files may get downloaded, others not. Is this good?
+    # assert not any([is_url_in_cache(u) for (fn, u, c) in td])
+    check_download_cache(check_hashes=True)
+    for (fn, u, c) in td:
+        clear_download_cache(u)
+
+def test_download_parallel_update(tmpdir):
+    n = 100
+    td = []
+    for i in range(n):
+        c = "%04d" % i
+        fn = os.path.join(tmpdir, c)
+        with open(fn,"w") as f:
+            f.write(c)
+        u = url_to(fn)
+        clear_download_cache(u)
+        td.append((fn, u, c))
+
+    r1 = download_files_in_parallel([u for (fn, u, c) in td])
+
+    td2 = []
+    for (fn, u, c) in td:
+        c_plus = c + " updated"
+        fn = os.path.join(tmpdir, c)
+        with open(fn,"w") as f:
+            f.write(c_plus)
+        td2.append((fn, u, c, c_plus))
+
+    r2 = download_files_in_parallel([u for (fn, u, c) in td], update_cache=False)
+    for r_1, r_2, (fn, u, c, c_plus) in zip(r1, r2, td2):
+        assert get_file_contents(r_1) == get_file_contents(r_2) == c
+    r3 = download_files_in_parallel([u for (fn, u, c) in td], update_cache=True)
+
+    check_download_cache(check_hashes=True)
+    for r_1, r_2, r_3, (fn, u, c, c_plus) in zip(r1, r2, r3, td2):
+        assert get_file_contents(r_3) != c
+        assert get_file_contents(r_3) == c_plus
+        clear_download_cache(u)
 
 def url_to(path):
     return pathlib.Path(path).resolve().as_uri()
@@ -135,7 +231,7 @@ def test_clear_download_multiple_references(tmpdir):
 @contextlib.contextmanager
 def make_url(contents, delete=True):
     with TemporaryDirectory() as d:
-        f_name = os.path.join(d,"f")
+        f_name = os.path.join(d,contents)
         with open(f_name, "w") as f:
             f.write(contents)
         url = url_to(f.name)
@@ -145,6 +241,11 @@ def make_url(contents, delete=True):
     if delete:
         yield url
 
+def test_download_file_basic():
+    with make_url("primary", delete=False) as primary:
+        fn = download_file(primary, cache=False)
+        with open(fn) as f:
+            assert f.read() == "primary"
 
 def test_sources_normal():
     with make_url("primary", delete=False) as primary:
@@ -699,3 +800,25 @@ def test_nested_get_readable_fileobj():
         #assert fileobj2.closed
 
     assert fileobj.closed and fileobj2.closed
+
+
+def test_cache_size_is_zero_when_empty(tmpdir):
+    with paths.set_temp_cache(tmpdir):
+        assert not get_cached_urls()
+        assert cache_total_size() == 0
+
+
+def test_cache_size_changes_correctly_when_files_are_added_and_removed(tmpdir):
+    b = os.urandom(16)
+    # Random bytes so we won't have a hash collision
+    n = os.path.join(tmpdir, "random")
+    u = url_to(n)
+    with open(n,"wb") as f:
+       f.write(b)
+    clear_download_cache(u)
+    s_i = cache_total_size()
+    download_file(u, cache=True)
+    assert cache_total_size() == s_i + len(b)
+    clear_download_cache(u)
+    assert cache_total_size() == s_i
+
