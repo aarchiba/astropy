@@ -33,6 +33,7 @@ from astropy.utils.introspection import find_current_module, resolve_name
 __all__ = [
     'Conf', 'conf',
     'download_file', 'download_files_in_parallel',
+    'get_readable_fileobj',
     'get_pkg_data_fileobj', 'get_pkg_data_filename',
     'get_pkg_data_contents', 'get_pkg_data_fileobjs',
     'get_pkg_data_filenames',
@@ -44,7 +45,6 @@ __all__ = [
     'compute_hash',
     'get_free_space_in_dir',
     'check_free_space_in_dir',
-    'get_readable_fileobj',
     'get_file_contents',
     'CacheMissingWarning',
 ]
@@ -125,7 +125,7 @@ def _is_inside(path, parent_path):
 def get_readable_fileobj(name_or_obj, encoding=None, cache=False,
                          show_progress=True, remote_timeout=None,
                          sources=None, update_cache=False):
-    """A context manager that yields a readable, seekable file-like object.
+    """Yield a readable, seekable file-like object from a file or URL.
 
     This supports passing filenames, URLs, and readable file-like objects,
     any of which can be compressed in gzip, bzip2 or lzma (xz) if the
