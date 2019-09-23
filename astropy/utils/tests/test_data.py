@@ -695,7 +695,8 @@ def test_check_download_cache(tmpdir):
     with make_url("testurl", delete=False) as testurl, \
             make_url("testurl2", delete=False) as testurl2, \
             paths.set_temp_cache(tmpdir), \
-            NamedTemporaryFile("wb") as zip_file:
+            TemporaryDirectory() as tmpdir2:
+        zip_file_name = os.path.join(tmpdir2, "the.zip")
         clear_download_cache()
         check_download_cache()
         download_file(testurl, cache=True)
@@ -703,27 +704,29 @@ def test_check_download_cache(tmpdir):
         normal = check_download_cache()
         download_file(testurl2, cache=True)
         assert check_download_cache() == normal
-        export_download_cache(zip_file, [testurl, testurl2])
+        export_download_cache(zip_file_name, [testurl, testurl2])
         assert check_download_cache(check_hashes=True) == normal
         clear_download_cache(testurl2)
         assert check_download_cache() == normal
-        import_download_cache(zip_file.name, [testurl])
+        import_download_cache(zip_file_name, [testurl])
         assert check_download_cache(check_hashes=True) == normal
 
 
-def test_export_import_roundtrip_one():
+def test_export_import_roundtrip_one(tmpdir):
     with make_url("testurl", delete=False) as testurl, \
-            NamedTemporaryFile("wb") as zip_file:
+            paths.set_temp_cache(tmpdir), \
+            TemporaryDirectory() as tmpdir2:
         with open(download_file(testurl, cache=True, show_progress=False),
                   "rb") as f:
             contents = f.read()
+        zip_file_name = os.path.join(tmpdir2, "the.zip")
         normal = check_download_cache()
-        initial_urls_in_cache = sorted(get_cached_urls())
-        export_download_cache(zip_file, [testurl])
+        initial_urls_in_cache = set(get_cached_urls())
+        export_download_cache(zip_file_name, [testurl])
         clear_download_cache(testurl)
-        import_download_cache(zip_file.name)
+        import_download_cache(zip_file_name)
         assert is_url_in_cache(testurl)
-        assert sorted(get_cached_urls()) == initial_urls_in_cache
+        assert set(get_cached_urls()) == initial_urls_in_cache
         with open(download_file(testurl, cache=True, show_progress=False),
                   "rb") as f:
             new_contents = f.read()
