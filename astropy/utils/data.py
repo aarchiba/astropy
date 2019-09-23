@@ -1679,7 +1679,8 @@ def import_download_cache(filename_or_obj, urls=None):
             v = index[k]
             with NamedTemporaryFile(
                 mode="wb",
-                prefix="astropy-zipfile-{}-".format(os.getpid()),) as f_temp:
+                prefix="astropy-zipfile-{}-".format(os.getpid())
+            ) as f_temp:
                 with z.open(v) as f_zip:
                     hash = hashlib.md5()
                     block = f_zip.read(block_size)
