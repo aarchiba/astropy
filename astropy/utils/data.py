@@ -1074,7 +1074,10 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
                 else:
                     dlmsg = f"Downloading {remote_url} from {source_url}"
                 with ProgressBarOrSpinner(size, dlmsg, file=progress_stream) as p:
-                    with NamedTemporaryFile(delete=False) as f:
+                    with NamedTemporaryFile(
+                        prefix="astropy-download-{}-".format(os.getpid()),
+                        delete=False
+                    ) as f:
                         try:
                             bytes_read = 0
                             block = remote.read(conf.download_block_size)
@@ -1676,8 +1679,7 @@ def import_download_cache(filename_or_obj, urls=None):
             v = index[k]
             with NamedTemporaryFile(
                 mode="wb",
-                prefix="astropy-download-{}-".format(os.getpid),
-            ) as f_temp:
+                prefix="astropy-zipfile-{}-".format(os.getpid()),) as f_temp:
                 with z.open(v) as f_zip:
                     hash = hashlib.md5()
                     block = f_zip.read(block_size)
