@@ -129,7 +129,26 @@ def test_download_parallel_from_internet_works():
     assert all([os.path.isfile(f) for f in fnout]), fnout
 
 
-def test_download_parallel_with_sources_and_bogus_original(valid_urls, invalid_urls, temp_cache):
+def test_download_parallel_with_empty_sources(valid_urls,
+                                              invalid_urls,
+                                              temp_cache):
+    urls = []
+    sources = {}
+    for i in range(5):
+        um, c = next(valid_urls)
+        assert not is_url_in_cache(um)
+        urls.append((um, c))
+    rs = download_files_in_parallel([u for (u, c) in urls], sources=sources)
+    assert len(rs) == len(urls)
+    for r, (u, c) in zip(rs, urls):
+        assert get_file_contents(r) == c
+        assert is_url_in_cache(u)
+    check_download_cache()
+
+
+def test_download_parallel_with_sources_and_bogus_original(valid_urls,
+                                                           invalid_urls,
+                                                           temp_cache):
     u, c = next(valid_urls)
     urls = [(u, c, None)]
     sources = {}
@@ -142,13 +161,38 @@ def test_download_parallel_with_sources_and_bogus_original(valid_urls, invalid_u
         u, c = next(valid_urls)
         sources[um].append(u)
         urls.append((um, c, c_bad))
-    rs = download_files_in_parallel([u for (u, c, c_bad) in urls], sources=sources)
+    rs = download_files_in_parallel([u for (u, c, c_bad) in urls],
+                                    sources=sources)
     assert len(rs) == len(urls)
     for r, (u, c, c_bad) in zip(rs, urls):
         assert get_file_contents(r) == c
         assert get_file_contents(r) != c_bad
         assert is_url_in_cache(u)
-        clear_download_cache(u)
+    check_download_cache()
+
+
+def test_download_with_sources_and_bogus_original(valid_urls,
+                                                  invalid_urls,
+                                                  temp_cache):
+    u, c = next(valid_urls)
+    urls = [(u, c, None)]
+    sources = {}
+    for i in range(5):
+        um, c_bad = next(valid_urls)
+        assert not is_url_in_cache(um)
+        sources[um] = []
+        for j in range(i):
+            sources[um].append(next(invalid_urls))
+        u, c = next(valid_urls)
+        sources[um].append(u)
+        urls.append((um, c, c_bad))
+    rs = [download_file(u, cache=True, sources=sources.get(u,None))
+          for (u, c, c_bad) in urls]
+    assert len(rs) == len(urls)
+    for r, (u, c, c_bad) in zip(rs, urls):
+        assert get_file_contents(r) == c
+        assert get_file_contents(r) != c_bad
+        assert is_url_in_cache(u)
     check_download_cache()
 
 
@@ -163,10 +207,11 @@ def test_download_parallel_many(temp_cache, valid_urls):
     assert len(r) == len(td)
     for r, (u, c) in zip(r, td):
         assert get_file_contents(r) == c
-        clear_download_cache(u)
 
 
-def test_download_parallel_partial_success(temp_cache, valid_urls, invalid_urls):
+def test_download_parallel_partial_success(temp_cache,
+                                           valid_urls,
+                                           invalid_urls):
     td = []
     for i in range(n_parallel_hammer):
         u, c = next(valid_urls)
@@ -181,8 +226,6 @@ def test_download_parallel_partial_success(temp_cache, valid_urls, invalid_urls)
     # Is this good? Should we stubbornly keep trying?
     # assert not any([is_url_in_cache(u) for (u, c) in td])
     check_download_cache(check_hashes=True)
-    for (u, c) in td:
-        clear_download_cache(u)
 
 
 def test_download_parallel_update(temp_cache, tmpdir):
@@ -197,6 +240,9 @@ def test_download_parallel_update(temp_cache, tmpdir):
         td.append((fn, u, c))
 
     r1 = download_files_in_parallel([u for (fn, u, c) in td])
+    assert len(r1) == len(td)
+    for r_1, (fn, u, c) in zip(r1, td):
+        assert get_file_contents(r_1) == c
 
     td2 = []
     for (fn, u, c) in td:
@@ -206,16 +252,21 @@ def test_download_parallel_update(temp_cache, tmpdir):
             f.write(c_plus)
         td2.append((fn, u, c, c_plus))
 
-    r2 = download_files_in_parallel([u for (fn, u, c) in td], update_cache=False)
-    for r_1, r_2, (fn, u, c, c_plus) in zip(r1, r2, td2):
-        assert get_file_contents(r_1) == get_file_contents(r_2) == c
-    r3 = download_files_in_parallel([u for (fn, u, c) in td], update_cache=True)
+    r2 = download_files_in_parallel([u for (fn, u, c) in td],
+                                    update_cache=False)
+    assert len(r2) == len(td)
+    for r_2, (fn, u, c, c_plus) in zip(r2, td2):
+        assert get_file_contents(r_2) == c
+        assert c != c_plus
+    r3 = download_files_in_parallel([u for (fn, u, c) in td],
+                                    update_cache=True)
 
-    check_download_cache(check_hashes=True)
-    for r_1, r_2, r_3, (fn, u, c, c_plus) in zip(r1, r2, r3, td2):
+    assert len(r3) == len(td)
+    for r_3, (fn, u, c, c_plus) in zip(r3, td2):
         assert get_file_contents(r_3) != c
         assert get_file_contents(r_3) == c_plus
-        clear_download_cache(u)
+
+    check_download_cache(check_hashes=True)
 
 
 def test_clear_download_multiple_references_doesnt_corrupt_storage(temp_cache):
@@ -287,7 +338,9 @@ def test_sources_multiple(temp_cache, valid_urls, invalid_urls):
     primary = next(invalid_urls)
     fallback1 = next(invalid_urls)
     fallback2, contents = next(valid_urls)
-    f = download_file(primary, cache=True, sources=[primary, fallback1, fallback2])
+    f = download_file(primary,
+                      cache=True,
+                      sources=[primary, fallback1, fallback2])
     assert get_file_contents(f) == contents
     assert is_url_in_cache(primary)
     assert not is_url_in_cache(fallback1)
@@ -299,7 +352,9 @@ def test_sources_multiple_missing(temp_cache, valid_urls, invalid_urls):
     fallback1 = next(invalid_urls)
     fallback2 = next(invalid_urls)
     with pytest.raises(urllib.error.URLError):
-        download_file(primary, cache=True, sources=[primary, fallback1, fallback2])
+        download_file(primary,
+                      cache=True,
+                      sources=[primary, fallback1, fallback2])
     assert not is_url_in_cache(primary)
     assert not is_url_in_cache(fallback1)
     assert not is_url_in_cache(fallback2)
@@ -315,8 +370,10 @@ def test_update_url(temp_cache):
         with open(f_name, "w") as f:
             f.write("new")
         assert get_file_contents(download_file(f_url, cache=True)) == "old"
-        assert get_file_contents(download_file(f_url, cache=True, update_cache=True)) == "new"
-    # Now the original file is gone
+        assert get_file_contents(download_file(f_url,
+                                               cache=True,
+                                               update_cache=True)) == "new"
+    assert not os.path.exists(f_name)
     assert get_file_contents(download_file(f_url, cache=True)) == "new"
     with pytest.raises(urllib.error.URLError):
         download_file(f_url, cache=True, update_cache=True)
@@ -749,7 +806,9 @@ def test_export_import_roundtrip_one(tmpdir, temp_cache, valid_urls):
     import_download_cache(zip_file_name)
     assert is_url_in_cache(testurl)
     assert set(get_cached_urls()) == initial_urls_in_cache
-    assert get_file_contents(download_file(testurl, cache=True, show_progress=False)) == contents
+    assert get_file_contents(download_file(testurl,
+                                           cache=True,
+                                           show_progress=False)) == contents
     assert check_download_cache(check_hashes=True) == normal
 
 
@@ -843,7 +902,9 @@ def test_cache_size_is_zero_when_empty(temp_cache):
     assert cache_total_size() == 0
 
 
-def test_cache_size_changes_correctly_when_files_are_added_and_removed(temp_cache, valid_urls):
+def test_cache_size_changes_correctly_when_files_are_added_and_removed(
+        temp_cache,
+        valid_urls):
     u, c = next(valid_urls)
     clear_download_cache(u)
     s_i = cache_total_size()

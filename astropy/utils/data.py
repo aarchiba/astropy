@@ -1404,24 +1404,25 @@ def _cache_lock():
         while True:
             try:
                 os.mkdir(lockdir)
-            except OSError:
+            except FileExistsError:
                 try:
                     with open(pidfn) as f:
                         pid = int(f.read())
                     # Could check if pid is os.getpid() and notify the user
                     # we deadlocked but it might be another thread in this process.
                     msg = (
-                        "Cache directory is locked by process {} after waiting {} s. "
-                        "If this is not a running python process, delete the directory "
-                        "\"{}\" and all its contents to break the lock."
-                        .format(pid, waited, lockdir)
+                        "Cache directory is locked by process {} (we are {}) after "
+                        "waiting {:.2f} s. If this is not a running python process, "
+                        "delete the directory \"{}\" and all its contents to break "
+                        "the lock."
+                        .format(pid, os.getpid(), waited, lockdir)
                     )
                     # Somebody has the lock. So wait.
                 except (ValueError, IOError):
                     pid = None
                     msg = (
                         "Cache lock exists but is in an inconsistent state after "
-                        "{} s. This may indicate an astropy bug or that kill -9 "
+                        "{:.2f} s. This may indicate an astropy bug or that kill -9 "
                         "was used. If you want to unlock the cache remove the "
                         "directory or file \"{}\"."
                         .format(waited, lockdir)
@@ -1556,6 +1557,10 @@ def check_download_cache(check_hashes=False):
                           "but is '{}'".format(
                                   u, hexdigest, hexdigest_file)
                     raise ValueError(msg)
+        for h in hash_files:
+            h_base = os.path.basename(h)
+            if len(h_base)==len(hash.md5().hexdigest) and re.match("[0-9a-f]+", h_base):
+                raise ValueError("Apparently abandoned hash file {}".format(h))
     return hash_files
 
 
