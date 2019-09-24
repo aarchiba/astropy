@@ -1640,7 +1640,9 @@ def export_download_cache(filename_or_obj, urls=None):
         index = {}
         for u in urls:
             fn = download_file(u, cache=True)
-            z_fn = os.path.join("cache", os.path.basename(fn))
+            # Do not use os.path.join because ZIP files want
+            # "/" on all platforms
+            z_fn = "cache/" + os.path.basename(fn)
             if z_fn not in added:
                 index[u] = z_fn
                 z.write(fn, z_fn)
