@@ -22,7 +22,7 @@ import urllib.parse
 import shelve
 import zipfile
 
-from tempfile import NamedTemporaryFile, gettempdir
+from tempfile import NamedTemporaryFile, gettempdir, TemporaryDirectory
 from warnings import warn
 
 from astropy import config as _config
@@ -1635,19 +1635,20 @@ def export_download_cache(filename_or_obj, urls=None):
     """
     if urls is None:
         urls = get_cached_urls()
-    prefix = "cache"
-    with zipfile.ZipFile(filename_or_obj, 'w',
-                         compression=zipfile.ZIP_DEFLATED) as z:
+    added = set()
+    with zipfile.ZipFile(filename_or_obj, 'w') as z:
         index = {}
         for u in urls:
             fn = download_file(u, cache=True)
-            z_fn = os.path.join(prefix, os.path.split(fn)[-1])
-            index[u] = z_fn
-            z.write(fn, z_fn)
+            z_fn = os.path.join("cache", os.path.basename(fn))
+            if z_fn not in added:
+                index[u] = z_fn
+                z.write(fn, z_fn)
+                added.add(z_fn)
         z.writestr(_cache_zip_index_name, json.dumps(index))
 
 
-def import_download_cache(filename_or_obj, urls=None):
+def import_download_cache(filename_or_obj, urls=None, update_cache=False):
     """Imports the contents of a ZIP file into the cache
 
     The ZIP file must be in the format produced by `export_download_cache`,
@@ -1662,36 +1663,32 @@ def import_download_cache(filename_or_obj, urls=None):
     urls : iterable of str or None
         The URLs to import from the ZIP file. The default is all
         URLs in the file.
+    update_cache : bool, optional
+        If True, any entry in the ZIP file will overwrite the value in the
+        cache; if False, leave untouched any entry already in the cache.
 
     See Also
     --------
     export_download_cache : export the contents the cache to of such a ZIP file
     """
     block_size = 65536
-    with zipfile.ZipFile(filename_or_obj, 'r',
-                         compression=zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(filename_or_obj, 'r') as z, TemporaryDirectory() as d:
         index = json.loads(z.read(_cache_zip_index_name))
         if urls is None:
             urls = index.keys()
-        for k in urls:
-            if is_url_in_cache(k):
+        for i, k in enumerate(urls):
+            if not update_cache and is_url_in_cache(k):
                 continue
             v = index[k]
-            with NamedTemporaryFile(
-                mode="wb",
-                prefix="astropy-zipfile-{}-".format(os.getpid())
-            ) as f_temp:
-                with z.open(v) as f_zip:
-                    hash = hashlib.md5()
+            f_temp_name = os.path.join(d, str(i))
+            with z.open(v) as f_zip, open(f_temp_name, "wb") as f_temp:
+                hash = hashlib.md5()
+                block = f_zip.read(block_size)
+                while block:
+                    f_temp.write(block)
+                    hash.update(block)
                     block = f_zip.read(block_size)
-                    while block:
-                        f_temp.write(block)
-                        hash.update(block)
-                        block = f_zip.read(block_size)
-                    hexdigest = hash.hexdigest()
-                _import_to_cache(k, f_temp.name,
-                                 hexdigest=hexdigest,
-                                 remove_original=True)
-                # NamedTemporaryFile doesn't like when the file disappears
-                with open(f_temp.name, "wb"):
-                    pass
+                hexdigest = hash.hexdigest()
+            _import_to_cache(k, f_temp_name,
+                             hexdigest=hexdigest,
+                             remove_original=True)
