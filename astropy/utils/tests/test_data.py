@@ -25,6 +25,7 @@ from astropy.utils.data import (
     compute_hash,
     download_file,
     cache_contents,
+    _tempfilestodel,
     get_cached_urls,
     is_url_in_cache,
     cache_total_size,
@@ -37,6 +38,7 @@ from astropy.utils.data import (
     get_pkg_data_contents,
     get_pkg_data_filename,
     import_download_cache,
+    check_free_space_in_dir,
     _get_download_cache_locs,
     download_files_in_parallel,
 )
@@ -186,7 +188,7 @@ def test_download_with_sources_and_bogus_original(valid_urls,
         u, c = next(valid_urls)
         sources[um].append(u)
         urls.append((um, c, c_bad))
-    rs = [download_file(u, cache=True, sources=sources.get(u,None))
+    rs = [download_file(u, cache=True, sources=sources.get(u, None))
           for (u, c, c_bad) in urls]
     assert len(rs) == len(urls)
     for r, (u, c, c_bad) in zip(rs, urls):
@@ -923,3 +925,37 @@ def test_cache_contents_agrees_with_get_urls(temp_cache, valid_urls):
     assert set(cache_contents().keys()) == set(get_cached_urls())
     for (u, c, h) in r:
         assert cache_contents()[u] == h
+
+
+def test_free_space_checker_huge(tmpdir):
+    with pytest.raises(OSError):
+        check_free_space_in_dir(tmpdir, 1_000_000_000_000_000_000)
+
+
+def test_download_file_bogus_settings(invalid_urls, temp_cache):
+    u = next(invalid_urls)
+    with pytest.raises(ValueError):
+        download_file(u, cache=False, update_cache=True)
+    with pytest.raises(ValueError):
+        download_file(u, sources=[])
+
+
+def test_download_file_local_directory(tmpdir):
+    with pytest.raises(urllib.request.URLError):
+        download_file(url_to(tmpdir))
+
+
+def test_download_file_schedules_deletion(valid_urls):
+    u, c = next(valid_urls)
+    f = download_file(u)
+    assert f in _tempfilestodel
+
+
+def test_clear_download_cache_refuses_to_delete_outside_the_cache(tmpdir):
+    fn = os.path.abspath(os.path.join(tmpdir, "file"))
+    with open(fn, "w") as f:
+        f.write("content")
+    assert os.path.exists(fn)
+    with pytest.raises(RuntimeError):
+        clear_download_cache(fn)
+    assert os.path.exists(fn)

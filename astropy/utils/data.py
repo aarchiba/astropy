@@ -1324,7 +1324,6 @@ def clear_download_cache(hashorurl=None):
             else:  # it's a path
                 filepath = os.path.join(dldir, hashorurl)
                 if not _is_inside(filepath, dldir):
-                    # URLs look like they are insided the directory
                     # Should this be ValueError? IOError?
                     raise RuntimeError(
                         "attempted to use clear_download_cache on the path {} "
@@ -1559,7 +1558,7 @@ def check_download_cache(check_hashes=False):
                     raise ValueError(msg)
         for h in hash_files:
             h_base = os.path.basename(h)
-            if len(h_base)==len(hashlib.md5().hexdigest) and re.match("[0-9a-f]+", h_base):
+            if len(h_base)==len(hashlib.md5().hexdigest()) and re.match("[0-9a-f]+", h_base):
                 raise ValueError("Apparently abandoned hash file {}".format(h))
     return hash_files
 
@@ -1574,8 +1573,10 @@ def _import_to_cache(url_key, filename,
         # We check now to see if another process has
         # inadvertently written the file underneath us
         # already
+        local_path = os.path.join(dldir, hexdigest)
         if url_key not in url2hash:
-            local_path = os.path.join(dldir, hexdigest)
+            # overwrite the file even if it exists for modification date
+            # and in case it got damaged somehow by an interrupted import
             if remove_original:
                 shutil.move(filename, local_path)
             else:
