@@ -1258,7 +1258,7 @@ def download_files_in_parallel(urls,
               cache=cache,
               show_progress=False,
               timeout=timeout,
-              sources=sources.get(u, [u]),
+              sources=sources.get(u, None),
               update_cache=update_cache)
          for u in combined_urls],
         file=progress,
@@ -1559,7 +1559,7 @@ def check_download_cache(check_hashes=False):
                     raise ValueError(msg)
         for h in hash_files:
             h_base = os.path.basename(h)
-            if len(h_base)==len(hash.md5().hexdigest) and re.match("[0-9a-f]+", h_base):
+            if len(h_base)==len(hashlib.md5().hexdigest) and re.match("[0-9a-f]+", h_base):
                 raise ValueError("Apparently abandoned hash file {}".format(h))
     return hash_files
 
