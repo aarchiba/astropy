@@ -12,6 +12,7 @@ import os
 import io
 import json
 import pathlib
+import re
 import shutil
 import socket
 import sys
@@ -25,6 +26,7 @@ import zipfile
 from tempfile import NamedTemporaryFile, gettempdir, TemporaryDirectory
 from warnings import warn
 
+import astropy.config.paths
 from astropy import config as _config
 from astropy.utils.exceptions import AstropyWarning
 from astropy.utils.introspection import find_current_module, resolve_name
@@ -916,7 +918,7 @@ def get_free_space_in_dir(path):
         import ctypes
         free_bytes = ctypes.c_ulonglong(0)
         retval = ctypes.windll.kernel32.GetDiskFreeSpaceExW(
-                ctypes.c_wchar_p(path), None, None, ctypes.pointer(free_bytes))
+                ctypes.c_wchar_p(str(path)), None, None, ctypes.pointer(free_bytes))
         if retval == 0:
             raise OSError('Checking free space on {!r} failed '
                           'unexpectedly.'.format(path))
@@ -1165,7 +1167,9 @@ def cache_total_size():
 
 
 def _do_download_files_in_parallel(kwargs):
-    return download_file(**kwargs)
+    with astropy.config.paths.set_temp_config(kwargs.pop("temp_config")):
+        with astropy.config.paths.set_temp_cache(kwargs.pop("temp_cache")):
+            return download_file(**kwargs)
 
 
 def download_files_in_parallel(urls,
@@ -1173,7 +1177,8 @@ def download_files_in_parallel(urls,
                                show_progress=True,
                                timeout=None,
                                sources=None,
-                               update_cache=False):
+                               update_cache=False,
+                               multiprocessing_start_method=None):
     """Download multiple files in parallel from the given URLs.
 
     Blocks until all files have downloaded.  The result is a list of
@@ -1213,6 +1218,12 @@ def download_files_in_parallel(urls,
         If true, attempt to download the file anew; if this is successful
         replace the current version. If not, raise a URLError but leave
         the existing cached value intact.
+
+    multiprocessing_start_method : str, optional
+        Useful primarily for testing; if in doubt leave it as the default.
+        When using multiprocessing, certain anomalies occur when starting
+        processes with the "spawn" method (the only option on Windows);
+        other anomalies occur with the "fork" method (the default on Unix).
 
     Returns
     -------
@@ -1259,10 +1270,14 @@ def download_files_in_parallel(urls,
               show_progress=False,
               timeout=timeout,
               sources=sources.get(u, None),
-              update_cache=update_cache)
+              update_cache=update_cache,
+              temp_cache=astropy.config.paths.set_temp_cache._temp_path,
+              temp_config=astropy.config.paths.set_temp_config._temp_path)
          for u in combined_urls],
         file=progress,
-        multiprocess=True)
+        multiprocess=True,
+        multiprocessing_start_method=multiprocessing_start_method,
+    )
     paths = []
     for url in urls:
         paths.append(combined_paths[combined_urls.index(url)])
@@ -1531,7 +1546,7 @@ def check_download_cache(check_hashes=False):
         try:
             hash_files.remove(os.path.join(dldir, "lock"))
         except KeyError:
-            raise ValueError("Lock file missing!?")
+            raise RuntimeError("Lock file missing!?")
         for u, h in url2hash.items():
             if not os.path.exists(h):
                 msg = "URL '{}' points to nonexistent file '{}'".format(
@@ -1575,8 +1590,6 @@ def _import_to_cache(url_key, filename,
         # already
         local_path = os.path.join(dldir, hexdigest)
         if url_key not in url2hash:
-            # overwrite the file even if it exists for modification date
-            # and in case it got damaged somehow by an interrupted import
             if remove_original:
                 shutil.move(filename, local_path)
             else:

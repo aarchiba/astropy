@@ -22,6 +22,7 @@ from astropy.config import paths
 from astropy.utils.data import (
     CacheMissingWarning,
     conf,
+    _cache,
     compute_hash,
     download_file,
     cache_contents,
@@ -94,7 +95,8 @@ def valid_urls(tmpdir):
             fn = os.path.join(tmpdir, "valid_"+str(i))
             with open(fn, "w") as f:
                 f.write(c)
-            yield url_to(fn), c
+            u = url_to(fn)
+            yield u, c
     return _valid_urls(tmpdir)
 
 
@@ -131,9 +133,27 @@ def test_download_parallel_from_internet_works():
     assert all([os.path.isfile(f) for f in fnout]), fnout
 
 
-def test_download_parallel_with_empty_sources(valid_urls,
-                                              invalid_urls,
-                                              temp_cache):
+@pytest.mark.parametrize("method", [None, "spawn"])
+def test_download_parallel_fills_cache(tmpdir, valid_urls, method):
+    urls = []
+    with paths.set_temp_cache(tmpdir):
+        for i in range(5):
+            um, c = next(valid_urls)
+            assert not is_url_in_cache(um)
+            urls.append((um, c))
+        rs = download_files_in_parallel([u for (u, c) in urls],
+                                        multiprocessing_start_method=method)
+        assert len(rs) == len(urls)
+        url_set = set(u for (u, c) in urls)
+        assert url_set <= set(get_cached_urls())
+        for r, (u, c) in zip(rs, urls):
+            assert get_file_contents(r) == c
+        check_download_cache()
+    assert not url_set.intersection(get_cached_urls())
+    check_download_cache()
+
+
+def test_download_parallel_with_empty_sources(valid_urls, temp_cache):
     urls = []
     sources = {}
     for i in range(5):
@@ -142,10 +162,11 @@ def test_download_parallel_with_empty_sources(valid_urls,
         urls.append((um, c))
     rs = download_files_in_parallel([u for (u, c) in urls], sources=sources)
     assert len(rs) == len(urls)
+    # u = set(u for (u, c) in urls)
+    # assert u <= set(get_cached_urls())
+    check_download_cache()
     for r, (u, c) in zip(rs, urls):
         assert get_file_contents(r) == c
-        assert is_url_in_cache(u)
-    check_download_cache()
 
 
 def test_download_parallel_with_sources_and_bogus_original(valid_urls,
@@ -166,10 +187,11 @@ def test_download_parallel_with_sources_and_bogus_original(valid_urls,
     rs = download_files_in_parallel([u for (u, c, c_bad) in urls],
                                     sources=sources)
     assert len(rs) == len(urls)
+    # u = set(u for (u, c, c_bad) in urls)
+    # assert u <= set(get_cached_urls())
     for r, (u, c, c_bad) in zip(rs, urls):
         assert get_file_contents(r) == c
         assert get_file_contents(r) != c_bad
-        assert is_url_in_cache(u)
     check_download_cache()
 
 
@@ -959,3 +981,42 @@ def test_clear_download_cache_refuses_to_delete_outside_the_cache(tmpdir):
     with pytest.raises(RuntimeError):
         clear_download_cache(fn)
     assert os.path.exists(fn)
+
+
+def test_check_download_cache_finds_unreferenced_files(temp_cache, valid_urls):
+    u, c = next(valid_urls)
+    download_file(u, cache=True)
+    with _cache(write=True) as (dldir, urlmap):
+        del urlmap[u]
+    with pytest.raises(ValueError):
+        check_download_cache()
+
+
+def test_check_download_cache_finds_missing_files(temp_cache, valid_urls):
+    u, c = next(valid_urls)
+    os.remove(download_file(u, cache=True))
+    with pytest.raises(ValueError):
+        check_download_cache()
+
+
+def test_check_download_cache_finds_bogus_entries(temp_cache, valid_urls):
+    u, c = next(valid_urls)
+    download_file(u, cache=True)
+    with _cache(write=True) as (dldir, urlmap):
+        bd = os.path.join(dldir,"bogus")
+        os.mkdir(bd)
+        bf = os.path.join(bd,"file")
+        with open(bf, "wt") as f:
+            f.write("bogus file that exists")
+        urlmap[u] = bf
+    with pytest.raises(ValueError):
+        check_download_cache()
+
+
+def test_check_download_cache_finds_bogus_hashes(temp_cache, valid_urls):
+    u, c = next(valid_urls)
+    fn = download_file(u, cache=True)
+    with open(fn, "w") as f:
+        f.write("bogus contents")
+    with pytest.raises(ValueError):
+        check_download_cache(check_hashes=True)
