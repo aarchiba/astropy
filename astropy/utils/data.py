@@ -1432,6 +1432,13 @@ def _cache_lock():
                         .format(pid, os.getpid(), waited, lockdir)
                     )
                     # Somebody has the lock. So wait.
+                except PermissionError:
+                    msg = (
+                        "Permission error accessing PID file. This probably means "
+                        "that you are on windows and another process has it open. "
+                        "This shouldn't last long but is still happening after {} s."
+                        .format(waited)
+                    )
                 except (ValueError, IOError):
                     pid = None
                     msg = (
