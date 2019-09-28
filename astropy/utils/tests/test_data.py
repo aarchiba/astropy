@@ -4,6 +4,7 @@
 import os
 import sys
 import base64
+import shutil
 import hashlib
 import pathlib
 import tempfile
@@ -13,8 +14,10 @@ import contextlib
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
+import py.path
 import pytest
 
 from astropy.utils import data
@@ -64,6 +67,7 @@ else:
     HAS_XZ = True
 
 n_parallel_hammer = 10
+n_thread_hammer = 20
 
 
 def url_to(path):
@@ -121,80 +125,6 @@ def test_download_nocache_from_internet():
     assert os.path.isfile(fnout)
 
 
-@pytest.mark.remote_data(source="astropy")
-def test_download_parallel_from_internet_works():
-    main_url = conf.dataurl
-    mirror_url = conf.dataurl_mirror
-    fileloc = "intersphinx/README"
-    try:
-        fnout = download_files_in_parallel([main_url, main_url + fileloc])
-    except urllib.error.URLError:  # Use mirror if timed out
-        fnout = download_files_in_parallel([mirror_url, mirror_url + fileloc])
-    assert all([os.path.isfile(f) for f in fnout]), fnout
-
-
-@pytest.mark.parametrize("method", [None, "spawn"])
-def test_download_parallel_fills_cache(tmpdir, valid_urls, method):
-    urls = []
-    with paths.set_temp_cache(tmpdir):
-        for i in range(5):
-            um, c = next(valid_urls)
-            assert not is_url_in_cache(um)
-            urls.append((um, c))
-        rs = download_files_in_parallel([u for (u, c) in urls],
-                                        multiprocessing_start_method=method)
-        assert len(rs) == len(urls)
-        url_set = set(u for (u, c) in urls)
-        assert url_set <= set(get_cached_urls())
-        for r, (u, c) in zip(rs, urls):
-            assert get_file_contents(r) == c
-        check_download_cache()
-    assert not url_set.intersection(get_cached_urls())
-    check_download_cache()
-
-
-def test_download_parallel_with_empty_sources(valid_urls, temp_cache):
-    urls = []
-    sources = {}
-    for i in range(5):
-        um, c = next(valid_urls)
-        assert not is_url_in_cache(um)
-        urls.append((um, c))
-    rs = download_files_in_parallel([u for (u, c) in urls], sources=sources)
-    assert len(rs) == len(urls)
-    # u = set(u for (u, c) in urls)
-    # assert u <= set(get_cached_urls())
-    check_download_cache()
-    for r, (u, c) in zip(rs, urls):
-        assert get_file_contents(r) == c
-
-
-def test_download_parallel_with_sources_and_bogus_original(valid_urls,
-                                                           invalid_urls,
-                                                           temp_cache):
-    u, c = next(valid_urls)
-    urls = [(u, c, None)]
-    sources = {}
-    for i in range(5):
-        um, c_bad = next(valid_urls)
-        assert not is_url_in_cache(um)
-        sources[um] = []
-        for j in range(i):
-            sources[um].append(next(invalid_urls))
-        u, c = next(valid_urls)
-        sources[um].append(u)
-        urls.append((um, c, c_bad))
-    rs = download_files_in_parallel([u for (u, c, c_bad) in urls],
-                                    sources=sources)
-    assert len(rs) == len(urls)
-    # u = set(u for (u, c, c_bad) in urls)
-    # assert u <= set(get_cached_urls())
-    for r, (u, c, c_bad) in zip(rs, urls):
-        assert get_file_contents(r) == c
-        assert get_file_contents(r) != c_bad
-    check_download_cache()
-
-
 def test_download_with_sources_and_bogus_original(valid_urls,
                                                   invalid_urls,
                                                   temp_cache):
@@ -220,77 +150,23 @@ def test_download_with_sources_and_bogus_original(valid_urls,
     check_download_cache()
 
 
-def test_download_parallel_many(temp_cache, valid_urls):
-    td = []
-    for i in range(n_parallel_hammer):
-        u, c = next(valid_urls)
-        clear_download_cache(u)
-        td.append((u, c))
+def test_download_file_threaded_many(temp_cache, valid_urls):
+    """Hammer download_file with multiple threaded requests.
 
-    r = download_files_in_parallel([u for (u, c) in td])
-    assert len(r) == len(td)
-    for r, (u, c) in zip(r, td):
+    The goal is to stress-test the locking system. Normal parallel downloading
+    also does this but coverage tools lose track of which paths are explored.
+    The hope is that if the parallelism happens in threads, and from here, the
+    code coverage tools should be able to cope, maybe?
+
+    """
+    urls = [next(valid_urls) for i in range(n_thread_hammer)]
+    with ThreadPoolExecutor(max_workers=len(urls)) as P:
+        r = list(P.map(lambda u: download_file(u, cache=True),
+                       [u for (u, c) in urls]))
+    check_download_cache()
+    assert len(r) == len(urls)
+    for r, (u, c) in zip(r, urls):
         assert get_file_contents(r) == c
-
-
-def test_download_parallel_partial_success(temp_cache,
-                                           valid_urls,
-                                           invalid_urls):
-    td = []
-    for i in range(n_parallel_hammer):
-        u, c = next(valid_urls)
-        clear_download_cache(u)
-        td.append((u, c))
-
-    u_bad = next(invalid_urls)
-
-    with pytest.raises(urllib.request.URLError):
-        download_files_in_parallel([u_bad] + [u for (u, c) in td])
-    # Actually some files may get downloaded, others not.
-    # Is this good? Should we stubbornly keep trying?
-    # assert not any([is_url_in_cache(u) for (u, c) in td])
-    check_download_cache(check_hashes=True)
-
-
-def test_download_parallel_update(temp_cache, tmpdir):
-    td = []
-    for i in range(n_parallel_hammer):
-        c = "%04d" % i
-        fn = os.path.join(tmpdir, c)
-        with open(fn, "w") as f:
-            f.write(c)
-        u = url_to(fn)
-        clear_download_cache(u)
-        td.append((fn, u, c))
-
-    r1 = download_files_in_parallel([u for (fn, u, c) in td])
-    assert len(r1) == len(td)
-    for r_1, (fn, u, c) in zip(r1, td):
-        assert get_file_contents(r_1) == c
-
-    td2 = []
-    for (fn, u, c) in td:
-        c_plus = c + " updated"
-        fn = os.path.join(tmpdir, c)
-        with open(fn, "w") as f:
-            f.write(c_plus)
-        td2.append((fn, u, c, c_plus))
-
-    r2 = download_files_in_parallel([u for (fn, u, c) in td],
-                                    update_cache=False)
-    assert len(r2) == len(td)
-    for r_2, (fn, u, c, c_plus) in zip(r2, td2):
-        assert get_file_contents(r_2) == c
-        assert c != c_plus
-    r3 = download_files_in_parallel([u for (fn, u, c) in td],
-                                    update_cache=True)
-
-    assert len(r3) == len(td)
-    for r_3, (fn, u, c, c_plus) in zip(r3, td2):
-        assert get_file_contents(r_3) != c
-        assert get_file_contents(r_3) == c_plus
-
-    check_download_cache(check_hashes=True)
 
 
 def test_clear_download_multiple_references_doesnt_corrupt_storage(temp_cache):
@@ -446,6 +322,153 @@ def test_download_cache_after_clear(tmpdir, temp_cache, valid_urls):
 
     fnout = download_file(testurl, cache=True)
     assert os.path.isfile(fnout)
+
+
+@pytest.mark.remote_data(source="astropy")
+def test_download_parallel_from_internet_works():
+    main_url = conf.dataurl
+    mirror_url = conf.dataurl_mirror
+    fileloc = "intersphinx/README"
+    try:
+        fnout = download_files_in_parallel([main_url, main_url + fileloc])
+    except urllib.error.URLError:  # Use mirror if timed out
+        fnout = download_files_in_parallel([mirror_url, mirror_url + fileloc])
+    assert all([os.path.isfile(f) for f in fnout]), fnout
+
+
+@pytest.mark.parametrize("method", [None, "spawn"])
+def test_download_parallel_fills_cache(tmpdir, valid_urls, method):
+    urls = []
+    with paths.set_temp_cache(tmpdir):
+        for i in range(5):
+            um, c = next(valid_urls)
+            assert not is_url_in_cache(um)
+            urls.append((um, c))
+        rs = download_files_in_parallel([u for (u, c) in urls],
+                                        multiprocessing_start_method=method)
+        assert len(rs) == len(urls)
+        url_set = set(u for (u, c) in urls)
+        assert url_set <= set(get_cached_urls())
+        for r, (u, c) in zip(rs, urls):
+            assert get_file_contents(r) == c
+        check_download_cache()
+    assert not url_set.intersection(get_cached_urls())
+    check_download_cache()
+
+
+def test_download_parallel_with_empty_sources(valid_urls, temp_cache):
+    urls = []
+    sources = {}
+    for i in range(5):
+        um, c = next(valid_urls)
+        assert not is_url_in_cache(um)
+        urls.append((um, c))
+    rs = download_files_in_parallel([u for (u, c) in urls], sources=sources)
+    assert len(rs) == len(urls)
+    # u = set(u for (u, c) in urls)
+    # assert u <= set(get_cached_urls())
+    check_download_cache()
+    for r, (u, c) in zip(rs, urls):
+        assert get_file_contents(r) == c
+
+
+def test_download_parallel_with_sources_and_bogus_original(valid_urls,
+                                                           invalid_urls,
+                                                           temp_cache):
+    u, c = next(valid_urls)
+    urls = [(u, c, None)]
+    sources = {}
+    for i in range(5):
+        um, c_bad = next(valid_urls)
+        assert not is_url_in_cache(um)
+        sources[um] = []
+        for j in range(i):
+            sources[um].append(next(invalid_urls))
+        u, c = next(valid_urls)
+        sources[um].append(u)
+        urls.append((um, c, c_bad))
+    rs = download_files_in_parallel([u for (u, c, c_bad) in urls],
+                                    sources=sources)
+    assert len(rs) == len(urls)
+    # u = set(u for (u, c, c_bad) in urls)
+    # assert u <= set(get_cached_urls())
+    for r, (u, c, c_bad) in zip(rs, urls):
+        assert get_file_contents(r) == c
+        assert get_file_contents(r) != c_bad
+    check_download_cache()
+
+
+def test_download_parallel_many(temp_cache, valid_urls):
+    td = []
+    for i in range(n_parallel_hammer):
+        u, c = next(valid_urls)
+        clear_download_cache(u)
+        td.append((u, c))
+
+    r = download_files_in_parallel([u for (u, c) in td])
+    assert len(r) == len(td)
+    for r, (u, c) in zip(r, td):
+        assert get_file_contents(r) == c
+
+
+def test_download_parallel_partial_success(temp_cache,
+                                           valid_urls,
+                                           invalid_urls):
+    td = []
+    for i in range(n_parallel_hammer):
+        u, c = next(valid_urls)
+        clear_download_cache(u)
+        td.append((u, c))
+
+    u_bad = next(invalid_urls)
+
+    with pytest.raises(urllib.request.URLError):
+        download_files_in_parallel([u_bad] + [u for (u, c) in td])
+    # Actually some files may get downloaded, others not.
+    # Is this good? Should we stubbornly keep trying?
+    # assert not any([is_url_in_cache(u) for (u, c) in td])
+    check_download_cache(check_hashes=True)
+
+
+def test_download_parallel_update(temp_cache, tmpdir):
+    td = []
+    for i in range(n_parallel_hammer):
+        c = "%04d" % i
+        fn = os.path.join(tmpdir, c)
+        with open(fn, "w") as f:
+            f.write(c)
+        u = url_to(fn)
+        clear_download_cache(u)
+        td.append((fn, u, c))
+
+    r1 = download_files_in_parallel([u for (fn, u, c) in td])
+    assert len(r1) == len(td)
+    for r_1, (fn, u, c) in zip(r1, td):
+        assert get_file_contents(r_1) == c
+
+    td2 = []
+    for (fn, u, c) in td:
+        c_plus = c + " updated"
+        fn = os.path.join(tmpdir, c)
+        with open(fn, "w") as f:
+            f.write(c_plus)
+        td2.append((fn, u, c, c_plus))
+
+    r2 = download_files_in_parallel([u for (fn, u, c) in td],
+                                    update_cache=False)
+    assert len(r2) == len(td)
+    for r_2, (fn, u, c, c_plus) in zip(r2, td2):
+        assert get_file_contents(r_2) == c
+        assert c != c_plus
+    r3 = download_files_in_parallel([u for (fn, u, c) in td],
+                                    update_cache=True)
+
+    assert len(r3) == len(td)
+    for r_3, (fn, u, c, c_plus) in zip(r3, td2):
+        assert get_file_contents(r_3) != c
+        assert get_file_contents(r_3) == c_plus
+
+    check_download_cache(check_hashes=True)
 
 
 @pytest.mark.remote_data(source="astropy")
@@ -1003,9 +1026,9 @@ def test_check_download_cache_finds_bogus_entries(temp_cache, valid_urls):
     u, c = next(valid_urls)
     download_file(u, cache=True)
     with _cache(write=True) as (dldir, urlmap):
-        bd = os.path.join(dldir,"bogus")
+        bd = os.path.join(dldir, "bogus")
         os.mkdir(bd)
-        bf = os.path.join(bd,"file")
+        bf = os.path.join(bd, "file")
         with open(bf, "wt") as f:
             f.write("bogus file that exists")
         urlmap[u] = bf
@@ -1020,3 +1043,104 @@ def test_check_download_cache_finds_bogus_hashes(temp_cache, valid_urls):
         f.write("bogus contents")
     with pytest.raises(ValueError):
         check_download_cache(check_hashes=True)
+
+
+def test_cache_dir_is_actually_a_file(tmpdir, valid_urls):
+    def check_quietly_ignores_bogus_cache():
+        assert not get_cached_urls()
+        assert not is_url_in_cache("http://www.example.com/")
+        assert not cache_contents()
+        u, c = next(valid_urls)
+        r = download_file(u, cache=True)
+        assert not is_url_in_cache(u)
+        assert get_file_contents(r) == c
+        with pytest.raises(OSError):
+            check_download_cache()
+
+    fn = str(tmpdir / "file")
+    ct = "contents\n"
+    os.mkdir(fn)
+    with paths.set_temp_cache(fn):
+        shutil.rmtree(fn)
+        with open(fn, "w") as f:
+            f.write(ct)
+        with pytest.raises(NotADirectoryError):
+            paths.get_cache_dir()
+        check_quietly_ignores_bogus_cache()
+    assert get_file_contents(fn) == ct
+
+    with pytest.raises(NotADirectoryError):
+        with paths.set_temp_cache(fn):
+            pass
+    assert get_file_contents(str(fn)) == ct
+
+    cd = str(tmpdir / "astropy")
+    with open(cd, "w") as f:
+        f.write(ct)
+    with paths.set_temp_cache(tmpdir):
+        check_quietly_ignores_bogus_cache()
+    assert get_file_contents(cd) == ct
+
+
+@pytest.fixture
+def a_binary_file(tmp_path):
+    fn = tmp_path / "file"
+    b_contents = b"\xde\xad\xbe\xef"
+    with open(fn, "wb") as f:
+        f.write(b_contents)
+    yield fn, b_contents
+
+
+@pytest.fixture
+def a_file(tmp_path):
+    fn = tmp_path / "file.txt"
+    contents = "contents\n"
+    with open(fn, "w") as f:
+        f.write(contents)
+    yield fn, contents
+
+
+def test_get_fileobj_str(a_file):
+    fn, c = a_file
+    with get_readable_fileobj(str(fn)) as rf:
+        assert rf.read() == c
+
+
+def test_get_fileobj_localpath(a_file):
+    fn, c = a_file
+    with get_readable_fileobj(py.path.local(fn)) as rf:
+        assert rf.read() == c
+
+
+def test_get_fileobj_pathlib(a_file):
+    fn, c = a_file
+    with get_readable_fileobj(pathlib.Path(fn)) as rf:
+        assert rf.read() == c
+
+
+def test_get_fileobj_binary(a_binary_file):
+    fn, c = a_binary_file
+    with get_readable_fileobj(fn, encoding="binary") as rf:
+        assert rf.read() == c
+
+
+def test_get_fileobj_already_open_text(a_file):
+    fn, c = a_file
+    with open(fn, "r") as f:
+        with get_readable_fileobj(f) as rf:
+            with pytest.raises(TypeError):
+                rf.read()
+
+
+def test_get_fileobj_already_open_binary(a_file):
+    fn, c = a_file
+    with open(fn, "rb") as f:
+        with get_readable_fileobj(f) as rf:
+            assert rf.read() == c
+
+
+def test_get_fileobj_binary_already_open_binary(a_binary_file):
+    fn, c = a_binary_file
+    with open(fn, "rb") as f:
+        with get_readable_fileobj(f, encoding="binary") as rf:
+            assert rf.read() == c

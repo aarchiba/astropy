@@ -232,7 +232,16 @@ def get_readable_fileobj(name_or_obj, encoding=None, cache=False,
     # but that is not compatible with streams or urllib2.urlopen
     # objects on Python 2.x.
     if not hasattr(fileobj, 'seek'):
-        fileobj = io.BytesIO(fileobj.read())
+        try:
+            # py.path.LocalPath objects have .read() method but it uses
+            # text mode, which won't work. .read_binary() does, and
+            # surely other ducks would return binary contents when
+            # called like this.
+            # py.path.LocalPath is what comes from the tmpdir fixture
+            # in pytest.
+            fileobj = io.BytesIO(fileobj.read_binary())
+        except AttributeError:
+            fileobj = io.BytesIO(fileobj.read())
 
     # Now read enough bytes to look at signature
     signature = fileobj.read(4)
@@ -1634,8 +1643,14 @@ def get_cached_urls():
 
 def cache_contents():
     """Obtain a dict mapping cached URLs to filenames."""
-    with _cache() as (dldir, url2hash):
-        return {k: os.path.join(dldir, v) for (k, v) in url2hash.items()}
+    try:
+        with _cache() as (dldir, url2hash):
+            return {k: os.path.join(dldir, v) for (k, v) in url2hash.items()}
+    except OSError as e:
+        msg = 'Remote data cache could not be accessed due to '
+        estr = '' if len(e.args) < 1 else (': ' + str(e))
+        warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
+        return []
 
 
 _cache_zip_index_name = "index.json"
