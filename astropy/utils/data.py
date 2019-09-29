@@ -893,17 +893,14 @@ def _find_hash_fn(hash):
     file, otherwise returns None.
     """
 
-    try:
-        with _cache() as (dldir, url2hash):
-            hashfn = os.path.join(dldir, hash)
-            if os.path.isfile(hashfn):
-                return hashfn
-            else:
-                return None
-    except OSError as e:
-        msg = 'Could not access cache directory to search for data file: '
-        warn(CacheMissingWarning(msg + str(e)))
-        return None
+    with _cache() as (dldir, url2hash):
+        if dldir is None:
+            return None
+        hashfn = os.path.join(dldir, hash)
+        if os.path.isfile(hashfn):
+            return hashfn
+        else:
+            return None
 
 
 def get_free_space_in_dir(path):
@@ -1037,24 +1034,19 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
     url_key = remote_url
 
     if cache:
-        try:
-            with _cache() as (dldir, url2hash):
-                if not update_cache:
-                    try:
-                        return url2hash[url_key]
-                    except KeyError:
-                        pass
-                else:
-                    # Cache works
+        with _cache() as (dldir, url2hash):
+            if dldir is None:
+                cache = False
+                update_cache = False
+                missing_cache = True  # emit a warning later
+            elif update_cache:
+                # just check the cache works but we want a new value
+                pass
+            else:
+                try:
+                    return url2hash[url_key]
+                except KeyError:
                     pass
-        except OSError as e:
-            msg = 'Remote data cache could not be accessed due to '
-            estr = '' if len(e.args) < 1 else (': ' + str(e))
-            warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
-
-            cache = False
-            update_cache = False
-            missing_cache = True  # indicates that the cache is missing to raise a warning later
 
     errors = {}
     for source_url in sources:
@@ -1122,10 +1114,6 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
             from errors[sources[0]]
 
     if cache:
-        # If there is something there already for url_key, probably because of
-        # update_cache, clear it out to ensure that it gets deleted when
-        # nothing else references it.
-        clear_download_cache(url_key)
         local_path = _import_to_cache(url_key, f.name,
                                       hexdigest=hash.hexdigest(),
                                       remove_original=True)
@@ -1159,14 +1147,8 @@ def is_url_in_cache(url_key):
     --------
     cache_contents : obtain a dictionary listing everything in the cache
     """
-    try:
-        with _cache() as (dldir, url2hash):
-            return url_key in url2hash
-    except OSError as e:
-        msg = 'Remote data cache could not be accessed due to '
-        estr = '' if len(e.args) < 1 else (': ' + str(e))
-        warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
-        return False
+    with _cache() as (dldir, url2hash):
+        return url_key in url2hash
 
 
 def cache_total_size():
@@ -1498,16 +1480,61 @@ def _cache_lock():
             pass
 
 
+class ReadOnlyDict(dict):
+    def __setitem__(self, key, value):
+        raise TypeError("This object is read-only.")
+
+
+nothing = ReadOnlyDict()  # might as well share.
+
+
 @contextlib.contextmanager
 def _cache(write=False):
-    # if clear_download_cache happens while a reader
-    # is working then Bad Things will happen. But in any case the
-    # API uses filenames so clear_download cache can disappear
-    # them out from under users well after we've exited any
-    # locking.
+    """Download cache context manager.
 
-    dldir, urlmapfn = _get_download_cache_locs()
-    # raises an error if cache inaccessible
+    Yields a pair consisting of the download cache directory and a dict-like
+    object that maps downloaded URLs to the filenames that contain their
+    contents; these files reside in the download cache directory.
+
+    If writing is requested, this holds the lock and yields a modifiable
+    dict-like object (actually a shelve object from the shelve module).  If
+    there is something wrong with the cache setup, an appropriate exception
+    will be raised.
+
+    If reading is requested, the lock will be briefly acquired, the URL map
+    will be copied into a read-only dict-like object which is yielded, and the
+    lock will be released. If some problem occurs and the cache is inaccessible
+    or non-functional, a CacheMissingWarning will be emitted and this context
+    manager will yield an empty dict-like object and None as the download
+    directory.
+
+    The files in the download cache directory are named according to a
+    cryptographic hash of their contents (currently MD5, so hackers can cause
+    collisions). Thus files with the same content share storage. The
+    modification times on these files normally indicate when they were last
+    downloaded from the Internet.
+
+    Although this cache lives behind a lock, and files are not normally
+    modified, it is possible to break concurrent access - most easily by using
+    clear_download_cache on a URL while someone has the filename and wants to
+    read the file. Since download_file returns a filename, there is not much we
+    can do about this.  get_readable_fileobj doesn't quite avoid the problem,
+    though it almost immediately opens the filename, preserving the contents
+    from deletion. download_file itself also calls clear_download_cache when
+    it is un update_cache mode, so this can break things as well.
+
+    """
+    try:
+        dldir, urlmapfn = _get_download_cache_locs()
+    except OSError as e:
+        if write:
+            raise
+        else:
+            msg = 'Remote data cache could not be accessed due to '
+            estr = '' if len(e.args) < 1 else (': ' + str(e))
+            warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
+            yield None, nothing
+            return
     if write:
         with _cache_lock(), shelve.open(urlmapfn, flag="c") as url2hash:
             yield dldir, url2hash
@@ -1515,13 +1542,27 @@ def _cache(write=False):
         try:
             with _cache_lock(), shelve.open(urlmapfn, flag="r") as url2hash:
                 # Copy so we can release the lock.
-                d = dict(url2hash.items())
+                d = ReadOnlyDict(url2hash.items())
         except dbm.error:
-            # Might be a "file not found", might be something serious,
-            # no way to tell as shelve just gives you a plain dbm.error
-            # Also the file doesn't have a platform-independent name
-            d = {}
+            # Might be a "file not found" - that is, an un-initialized cache,
+            # might be something serious, no way to tell as shelve just gives
+            # you a plain dbm.error
+            # Also the file doesn't have a platform-independent name, so good
+            # luck diagnosing the problem if it is one.
+            d = nothing
         yield dldir, d
+
+
+class CacheDamaged(ValueError):
+    """Record the URL or file that was a problem.
+
+    Using clear_download_cache on the .bad_file or .bad_url attribute,
+    whichever is not None, should resolve this particular problem.
+    """
+    def __init__(self, *args, bad_url=None, bad_file=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.bad_url = bad_url
+        self.bad_file = bad_file
 
 
 def check_download_cache(check_hashes=False):
@@ -1537,39 +1578,58 @@ def check_download_cache(check_hashes=False):
     This funtion also returns a list of non-indexed files. A few will be
     associated with the shelve object; their exact names depend on the backend
     used but will probably be based on ``urlmap``. The presence of other files,
-    particularly those that 32-character hex strings or start with those,
+    particularly those that are 32-character hex strings or start with those,
     probably indicates that something has gone wrong and inaccessible files
     have accumulated in the cache. These can be removed with
     `clear_download_cache`, either passing the filename returned here, or
-    with no arguments to  empty the entire cache and return it to a
+    with no arguments to empty the entire cache and return it to a
     reasonable, if empty, state.
+
+    Parameters
+    ----------
+    check_hashes : bool, optional
+        Whether to compute the hashes of the contents of all files in the
+        cache and compare them to the names. This can take some time if
+        the cache contains large files.
 
     Returns
     -------
     strays : set of strings
         This is the set of files in the cache directory that do not correspond
-        to known URLs.
+        to known URLs. This may include some files associated with the cache
+        index.
+
+    Raises
+    ------
+    CacheDamaged
+        To indicate a problem with the cache contents; the exception contains
+        a .bad_url or a .bad_file attribute to allow the user to use
+        `clear_download_cache` to remove the offending item.
+    OSError, RuntimeError
+        To indicate some problem with the cache structure. This may need a full
+        `clear_download_cache` to resolve, or may indicate some kind of
+        misconfiguration.
     """
     # We're only reading but without the lock goodness knows what
     # inconsistencies might be detected
     with _cache(write=True) as (dldir, url2hash):
-        hash_files = set(os.path.join(dldir, k)
-                         for k in os.listdir(dldir))
+        leftover_files = set(os.path.join(dldir, k)
+                             for k in os.listdir(dldir))
         try:
-            hash_files.remove(os.path.join(dldir, "urlmap"))
+            leftover_files.remove(os.path.join(dldir, "urlmap"))
         except KeyError:
             pass
         try:
-            hash_files.remove(os.path.join(dldir, "lock"))
+            leftover_files.remove(os.path.join(dldir, "lock"))
         except KeyError:
             raise RuntimeError("Lock file missing!?")
         for u, h in url2hash.items():
             if not os.path.exists(h):
                 msg = "URL '{}' points to nonexistent file '{}'".format(
                         u, h)
-                raise ValueError(msg)
+                raise CacheDamaged(msg, bad_url=u)
             try:
-                hash_files.remove(h)
+                leftover_files.remove(h)
             except KeyError:
                 # Huh. Two different URLs retrieved identical files.
                 pass
@@ -1578,7 +1638,7 @@ def check_download_cache(check_hashes=False):
                 msg = "Expected downloaded files to be in '{}' but " +\
                       "URL '{}' points to file '{}'".format(
                               dldir, u, h)
-                raise ValueError(msg)
+                raise CacheDamaged(msg, bad_url=u)
             if check_hashes:
                 hexdigest_file = compute_hash(h)
                 if hexdigest_file != hexdigest:
@@ -1586,12 +1646,12 @@ def check_download_cache(check_hashes=False):
                           "do not match the hash value: should be '{}' " +\
                           "but is '{}'".format(
                                   u, hexdigest, hexdigest_file)
-                    raise ValueError(msg)
-        for h in hash_files:
+                    raise CacheDamaged(msg, bad_file=h)
+        for h in leftover_files:
             h_base = os.path.basename(h)
-            if len(h_base)==len(hashlib.md5().hexdigest()) and re.match("[0-9a-f]+", h_base):
-                raise ValueError("Apparently abandoned hash file {}".format(h))
-    return hash_files
+            if len(h_base) == 2*hashlib.md5().digest_size and re.match("[0-9a-f]+", h_base):
+                raise CacheDamaged("Apparently abandoned hash file {}".format(h), bad_file=h)
+    return leftover_files
 
 
 def _import_to_cache(url_key, filename,
@@ -1605,15 +1665,31 @@ def _import_to_cache(url_key, filename,
         # inadvertently written the file underneath us
         # already
         local_path = os.path.join(dldir, hexdigest)
-        if url_key not in url2hash:
-            if remove_original:
-                shutil.move(filename, local_path)
-            else:
-                shutil.copy(filename, local_path)
-            url2hash[url_key] = local_path
-        else:
+        if os.path.exists(local_path):
+            # Same hash, no problem
             if remove_original:
                 os.remove(filename)
+            # Update file modification time.
+            try:
+                with open(local_path, "w+b"):
+                    pass
+            except OSError:
+                pass
+        elif remove_original:
+            shutil.move(filename, local_path)
+        else:
+            shutil.copy(filename, local_path)
+        old_hash = url2hash.pop(url_key, None)
+        if old_hash is not None:
+            if hash not in url2hash.values():
+                try:
+                    os.remove(os.path.join(dldir, old_hash))
+                except OSError as e:
+                    warn("Unable to remove no-longer-referenced previous "
+                         "contents of {} because of: {}"
+                         .format(url_key, e),
+                         AstropyWarning)
+        url2hash[url_key] = local_path
         return url2hash[url_key]
 
 
@@ -1631,26 +1707,14 @@ def get_cached_urls():
     --------
     cache_contents : obtain a dictionary listing everything in the cache
     """
-    try:
-        with _cache() as (dldir, url2hash):
-            return list(url2hash.keys())
-    except OSError as e:
-        msg = 'Remote data cache could not be accessed due to '
-        estr = '' if len(e.args) < 1 else (': ' + str(e))
-        warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
-        return []
+    with _cache() as (dldir, url2hash):
+        return list(url2hash.keys())
 
 
 def cache_contents():
     """Obtain a dict mapping cached URLs to filenames."""
-    try:
-        with _cache() as (dldir, url2hash):
-            return {k: os.path.join(dldir, v) for (k, v) in url2hash.items()}
-    except OSError as e:
-        msg = 'Remote data cache could not be accessed due to '
-        estr = '' if len(e.args) < 1 else (': ' + str(e))
-        warn(CacheMissingWarning(msg + e.__class__.__name__ + estr))
-        return []
+    with _cache() as (dldir, url2hash):
+        return ReadOnlyDict((k, os.path.join(dldir, v)) for (k, v) in url2hash.items())
 
 
 _cache_zip_index_name = "index.json"

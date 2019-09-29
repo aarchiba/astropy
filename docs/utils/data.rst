@@ -35,6 +35,12 @@ that were not designed for heavy Web traffic. If you find the cache has
 corrupted or out-of-date data in it, you can remove an entry or clear
 the whole thing with `~astropy.utils.data.clear_download_cache`.
 
+The files in the download cache directory are named according to a
+cryptographic hash of their contents (currently MD5, so malevolent entities can
+cause collisions). Thus files with the same content share storage. The
+modification times on these files normally indicate when they were last
+downloaded from the Internet.
+
 Usage Within Astropy
 ====================
 

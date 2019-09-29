@@ -10,7 +10,6 @@ import pathlib
 import tempfile
 import warnings
 import itertools
-import contextlib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -74,23 +73,6 @@ def url_to(path):
     return pathlib.Path(path).resolve().as_uri()
 
 
-@contextlib.contextmanager
-def make_url(contents, delete=False):
-    with TemporaryDirectory() as d:
-        c = contents.split()
-        if c:
-            f_name = c[0]
-        if not c or not f_name:
-            f_name = "empty"
-        f_name = os.path.join(d, f_name)
-        url = url_to(f_name)
-        clear_download_cache(url)
-        if not delete:
-            with open(f_name, "w") as f:
-                f.write(contents)
-        yield url
-
-
 @pytest.fixture
 def valid_urls(tmpdir):
     def _valid_urls(tmpdir):
@@ -109,6 +91,7 @@ def invalid_urls(tmpdir):
     def _invalid_urls(tmpdir):
         for i in itertools.count():
             fn = os.path.join(tmpdir, "invalid_"+str(i))
+            assert not os.path.exists(fn)
             yield url_to(fn)
     return _invalid_urls(tmpdir)
 
@@ -117,12 +100,31 @@ def invalid_urls(tmpdir):
 def temp_cache(tmpdir):
     with paths.set_temp_cache(tmpdir):
         yield None
+        check_download_cache(check_hashes=True)
 
 
 @pytest.mark.remote_data(source="astropy")
 def test_download_nocache_from_internet():
     fnout = download_file(TESTURL, cache=False)
     assert os.path.isfile(fnout)
+
+
+@pytest.fixture
+def a_binary_file(tmp_path):
+    fn = tmp_path / "file"
+    b_contents = b"\xde\xad\xbe\xef"
+    with open(fn, "wb") as f:
+        f.write(b_contents)
+    yield fn, b_contents
+
+
+@pytest.fixture
+def a_file(tmp_path):
+    fn = tmp_path / "file.txt"
+    contents = "contents\n"
+    with open(fn, "w") as f:
+        f.write(contents)
+    yield fn, contents
 
 
 def test_download_with_sources_and_bogus_original(valid_urls,
@@ -147,7 +149,6 @@ def test_download_with_sources_and_bogus_original(valid_urls,
         assert get_file_contents(r) == c
         assert get_file_contents(r) != c_bad
         assert is_url_in_cache(u)
-    check_download_cache()
 
 
 def test_download_file_threaded_many(temp_cache, valid_urls):
@@ -169,23 +170,29 @@ def test_download_file_threaded_many(temp_cache, valid_urls):
         assert get_file_contents(r) == c
 
 
-def test_clear_download_multiple_references_doesnt_corrupt_storage(temp_cache):
+def test_clear_download_multiple_references_doesnt_corrupt_storage(
+        temp_cache,
+        tmpdir
+):
     """Check that files with the same hash don't confuse the storage."""
     content = "Test data; doesn't matter much.\n"
 
-    with make_url(content) as a_url:
-        a_hash = download_file(a_url, cache=True)
-    clear_download_cache(a_url)
+    def make_url():
+        with NamedTemporaryFile("w", dir=str(tmpdir), delete=False) as f:
+            f.write(content)
+        url = url_to(f.name)
+        clear_download_cache(url)
+        hash = download_file(url, cache=True)
+        return url, hash
+
+    a_url, a_hash = make_url()
     clear_download_cache(a_hash)
+    assert not is_url_in_cache(a_url)
 
-    with make_url(content) as f_url:
-        clear_download_cache(f_url)
-        f_hash = download_file(f_url, cache=True)
+    f_url, f_hash = make_url()
+    g_url, g_hash = make_url()
 
-    with make_url(content) as g_url:
-        clear_download_cache(g_url)
-        g_hash = download_file(g_url, cache=True)
-
+    assert f_url != g_url
     assert f_hash == g_hash
     assert is_url_in_cache(f_url)
     assert is_url_in_cache(g_url)
@@ -260,8 +267,8 @@ def test_sources_multiple_missing(temp_cache, valid_urls, invalid_urls):
     assert not is_url_in_cache(fallback2)
 
 
-def test_update_url(temp_cache):
-    with TemporaryDirectory() as d:
+def test_update_url(tmpdir, temp_cache):
+    with TemporaryDirectory(dir=tmpdir) as d:
         f_name = os.path.join(d, "f")
         with open(f_name, "w") as f:
             f.write("old")
@@ -339,6 +346,8 @@ def test_download_parallel_from_internet_works():
 @pytest.mark.parametrize("method", [None, "spawn"])
 def test_download_parallel_fills_cache(tmpdir, valid_urls, method):
     urls = []
+    # tmpdir is shared between many tests, and that can cause weird
+    # interactions if we set the temporary cache too directly
     with paths.set_temp_cache(tmpdir):
         for i in range(5):
             um, c = next(valid_urls)
@@ -395,7 +404,6 @@ def test_download_parallel_with_sources_and_bogus_original(valid_urls,
     for r, (u, c, c_bad) in zip(rs, urls):
         assert get_file_contents(r) == c
         assert get_file_contents(r) != c_bad
-    check_download_cache()
 
 
 def test_download_parallel_many(temp_cache, valid_urls):
@@ -427,7 +435,6 @@ def test_download_parallel_partial_success(temp_cache,
     # Actually some files may get downloaded, others not.
     # Is this good? Should we stubbornly keep trying?
     # assert not any([is_url_in_cache(u) for (u, c) in td])
-    check_download_cache(check_hashes=True)
 
 
 def test_download_parallel_update(temp_cache, tmpdir):
@@ -467,8 +474,6 @@ def test_download_parallel_update(temp_cache, tmpdir):
     for r_3, (fn, u, c, c_plus) in zip(r3, td2):
         assert get_file_contents(r_3) != c
         assert get_file_contents(r_3) == c_plus
-
-    check_download_cache(check_hashes=True)
 
 
 @pytest.mark.remote_data(source="astropy")
@@ -898,50 +903,27 @@ def test_export_import_roundtrip(tmpdir, temp_cache, valid_urls):
     assert check_download_cache(check_hashes=True) == normal
 
 
-def test_get_readable_fileobj_cleans_up_temporary_files(tmpdir, monkeypatch):
-    """checks that get_readable_fileobj leaves no temporary files behind"""
-    # Create a 'file://' URL pointing to a path on the local filesystem
-    url = url_to(TESTLOCAL)
+def test_export_import_roundtrip_different_location(tmpdir, valid_urls):
+    original_cache = tmpdir / "original"
+    os.mkdir(original_cache)
+    zip_file_name = tmpdir / "the.zip"
 
-    # Save temporary files to a known location
-    monkeypatch.setattr(tempfile, "tempdir", str(tmpdir))
+    urls = list(itertools.islice(valid_urls, 7))
+    initial_urls_in_cache = set(u for (u, c) in urls)
+    with paths.set_temp_cache(original_cache):
+        for u, c in urls:
+            download_file(u, cache=True)
+        assert set(get_cached_urls()) == initial_urls_in_cache
+        export_download_cache(zip_file_name)
 
-    # Call get_readable_fileobj() as a context manager
-    with get_readable_fileobj(url):
-        pass
-
-    # Get listing of files in temporary directory
-    tempdir_listing = tmpdir.listdir()
-
-    # Assert that the temporary file was empty after get_readable_fileobj()
-    # context manager finished running
-    assert len(tempdir_listing) == 0
-
-
-def test_path_objects_get_readable_fileobj():
-    fpath = pathlib.Path(TESTLOCAL)
-    with get_readable_fileobj(fpath) as f:
-        assert f.read().rstrip() == (
-            "This file is used in the test_local_data_* "
-            "testing functions\nCONTENT"
-        )
-
-
-def test_nested_get_readable_fileobj():
-    """Ensure fileobj state is as expected when get_readable_fileobj()
-    is called inside another get_readable_fileobj().
-    """
-    with get_readable_fileobj(TESTLOCAL, encoding="binary") as fileobj:
-        with get_readable_fileobj(fileobj, encoding="UTF-8") as fileobj2:
-            fileobj2.seek(1)
-        fileobj.seek(1)
-
-        # Theoretically, fileobj2 should be closed already here but it is not.
-        # See https://github.com/astropy/astropy/pull/8675.
-        # UNCOMMENT THIS WHEN PYTHON FINALLY LETS IT HAPPEN.
-        # assert fileobj2.closed
-
-    assert fileobj.closed and fileobj2.closed
+    new_cache = tmpdir / "new"
+    os.mkdir(new_cache)
+    with paths.set_temp_cache(new_cache):
+        import_download_cache(zip_file_name)
+        check_download_cache(check_hashes=True)
+        assert set(get_cached_urls()) == initial_urls_in_cache
+        for (u, c) in urls:
+            assert get_file_contents(download_file(u, cache=True)) == c
 
 
 def test_cache_size_is_zero_when_empty(temp_cache):
@@ -994,6 +976,7 @@ def test_download_file_schedules_deletion(valid_urls):
     u, c = next(valid_urls)
     f = download_file(u)
     assert f in _tempfilestodel
+    # how to test deletion actually occurs?
 
 
 def test_clear_download_cache_refuses_to_delete_outside_the_cache(tmpdir):
@@ -1013,6 +996,7 @@ def test_check_download_cache_finds_unreferenced_files(temp_cache, valid_urls):
         del urlmap[u]
     with pytest.raises(ValueError):
         check_download_cache()
+    clear_download_cache()
 
 
 def test_check_download_cache_finds_missing_files(temp_cache, valid_urls):
@@ -1020,6 +1004,7 @@ def test_check_download_cache_finds_missing_files(temp_cache, valid_urls):
     os.remove(download_file(u, cache=True))
     with pytest.raises(ValueError):
         check_download_cache()
+    clear_download_cache()
 
 
 def test_check_download_cache_finds_bogus_entries(temp_cache, valid_urls):
@@ -1034,6 +1019,7 @@ def test_check_download_cache_finds_bogus_entries(temp_cache, valid_urls):
         urlmap[u] = bf
     with pytest.raises(ValueError):
         check_download_cache()
+    clear_download_cache()
 
 
 def test_check_download_cache_finds_bogus_hashes(temp_cache, valid_urls):
@@ -1043,17 +1029,28 @@ def test_check_download_cache_finds_bogus_hashes(temp_cache, valid_urls):
         f.write("bogus contents")
     with pytest.raises(ValueError):
         check_download_cache(check_hashes=True)
+    clear_download_cache()
 
 
 def test_cache_dir_is_actually_a_file(tmpdir, valid_urls):
     def check_quietly_ignores_bogus_cache():
-        assert not get_cached_urls()
-        assert not is_url_in_cache("http://www.example.com/")
-        assert not cache_contents()
-        u, c = next(valid_urls)
-        r = download_file(u, cache=True)
-        assert not is_url_in_cache(u)
-        assert get_file_contents(r) == c
+        with catch_warnings(CacheMissingWarning) as w:
+            assert not get_cached_urls()
+        assert any(wi.category == CacheMissingWarning for wi in w)
+        with catch_warnings(CacheMissingWarning) as w:
+            assert not is_url_in_cache("http://www.example.com/")
+        assert any(wi.category == CacheMissingWarning for wi in w)
+        with catch_warnings(CacheMissingWarning) as w:
+            assert not cache_contents()
+        assert any(wi.category == CacheMissingWarning for wi in w)
+        with catch_warnings(CacheMissingWarning) as w:
+            u, c = next(valid_urls)
+            r = download_file(u, cache=True)
+            assert get_file_contents(r) == c
+        assert any(wi.category == CacheMissingWarning for wi in w)
+        with catch_warnings(CacheMissingWarning) as w:
+            assert not is_url_in_cache(u)
+        assert any(wi.category == CacheMissingWarning for wi in w)
         with pytest.raises(OSError):
             check_download_cache()
 
@@ -1080,24 +1077,25 @@ def test_cache_dir_is_actually_a_file(tmpdir, valid_urls):
     with paths.set_temp_cache(tmpdir):
         check_quietly_ignores_bogus_cache()
     assert get_file_contents(cd) == ct
+    os.remove(cd)
 
+    os.makedirs(cd)
+    cd = str(tmpdir / "astropy" / "download")
+    with open(cd, "w") as f:
+        f.write(ct)
+    with paths.set_temp_cache(tmpdir):
+        check_quietly_ignores_bogus_cache()
+    assert get_file_contents(cd) == ct
+    os.remove(cd)
 
-@pytest.fixture
-def a_binary_file(tmp_path):
-    fn = tmp_path / "file"
-    b_contents = b"\xde\xad\xbe\xef"
-    with open(fn, "wb") as f:
-        f.write(b_contents)
-    yield fn, b_contents
-
-
-@pytest.fixture
-def a_file(tmp_path):
-    fn = tmp_path / "file.txt"
-    contents = "contents\n"
-    with open(fn, "w") as f:
-        f.write(contents)
-    yield fn, contents
+    os.makedirs(cd)
+    py_version = 'py' + str(sys.version_info.major)
+    cd = str(tmpdir / "astropy" / "download" / py_version)
+    with open(cd, "w") as f:
+        f.write(ct)
+    with paths.set_temp_cache(tmpdir):
+        check_quietly_ignores_bogus_cache()
+    assert get_file_contents(cd) == ct
 
 
 def test_get_fileobj_str(a_file):
@@ -1144,3 +1142,90 @@ def test_get_fileobj_binary_already_open_binary(a_binary_file):
     with open(fn, "rb") as f:
         with get_readable_fileobj(f, encoding="binary") as rf:
             assert rf.read() == c
+
+
+def test_cache_contents_not_writable(temp_cache, valid_urls):
+    c = cache_contents()
+    with pytest.raises(TypeError):
+        c["foo"] = 7
+    u, _ = next(valid_urls)
+    download_file(u, cache=True)
+    c = cache_contents()
+    assert u in c
+    with pytest.raises(TypeError):
+        c["foo"] = 7
+
+
+def test_cache_read_not_writable(temp_cache, valid_urls):
+    with _cache() as (dldir, urlmap):
+        with pytest.raises(TypeError):
+            urlmap["foo"] = 7
+    u, _ = next(valid_urls)
+    download_file(u, cache=True)
+    with _cache() as (dldir, urlmap):
+        assert u in urlmap
+        with pytest.raises(TypeError):
+            urlmap["foo"] = 7
+
+
+def test_cache_not_relocatable(tmpdir, valid_urls):
+    u, c = next(valid_urls)
+    d1 = tmpdir / "1"
+    os.mkdir(d1)
+    with paths.set_temp_cache(d1):
+        p1 = download_file(u, cache=True)
+        assert is_url_in_cache(u)
+        assert get_file_contents(p1) == c
+    d2 = tmpdir / "2"
+    # this will not work!
+    shutil.copytree(d1, d2)
+    with paths.set_temp_cache(d2):
+        assert is_url_in_cache(u)
+        p2 = download_file(u, cache=True)
+        assert p1 == p2
+
+
+def test_get_readable_fileobj_cleans_up_temporary_files(tmpdir, monkeypatch):
+    """checks that get_readable_fileobj leaves no temporary files behind"""
+    # Create a 'file://' URL pointing to a path on the local filesystem
+    url = url_to(TESTLOCAL)
+
+    # Save temporary files to a known location
+    monkeypatch.setattr(tempfile, "tempdir", str(tmpdir))
+
+    # Call get_readable_fileobj() as a context manager
+    with get_readable_fileobj(url) as f:
+        f.read()
+
+    # Get listing of files in temporary directory
+    tempdir_listing = tmpdir.listdir()
+
+    # Assert that the temporary file was empty after get_readable_fileobj()
+    # context manager finished running
+    assert len(tempdir_listing) == 0
+
+
+def test_path_objects_get_readable_fileobj():
+    fpath = pathlib.Path(TESTLOCAL)
+    with get_readable_fileobj(fpath) as f:
+        assert f.read().rstrip() == (
+            "This file is used in the test_local_data_* "
+            "testing functions\nCONTENT"
+        )
+
+
+def test_nested_get_readable_fileobj():
+    """Ensure fileobj state is as expected when get_readable_fileobj()
+    is called inside another get_readable_fileobj().
+    """
+    with get_readable_fileobj(TESTLOCAL, encoding="binary") as fileobj:
+        with get_readable_fileobj(fileobj, encoding="UTF-8") as fileobj2:
+            fileobj2.seek(1)
+        fileobj.seek(1)
+
+        # Theoretically, fileobj2 should be closed already here but it is not.
+        # See https://github.com/astropy/astropy/pull/8675.
+        # UNCOMMENT THIS WHEN PYTHON FINALLY LETS IT HAPPEN.
+        # assert fileobj2.closed
+
+    assert fileobj.closed and fileobj2.closed
