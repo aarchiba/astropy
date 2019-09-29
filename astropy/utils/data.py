@@ -1090,10 +1090,16 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
                                 bytes_read += len(block)
                                 p.update(bytes_read)
                                 block = remote.read(conf.download_block_size)
+                            if size is not None and bytes_read != size:
+                                raise urllib.error.ContentTooShortError(
+                                    "Downloaded file appears incomplete: "
+                                    "claimed size is {} but we obtained {} bytes.",
+                                    content = b"")
                         except BaseException:
                             if os.path.exists(f.name):
                                 os.remove(f.name)
                             raise
+
                 # Success!
                 break
 
