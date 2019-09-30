@@ -24,6 +24,7 @@ from astropy.config import paths
 from astropy.utils.data import (
     CacheMissingWarning,
     conf,
+    Conf,
     _cache,
     compute_hash,
     download_file,
@@ -42,6 +43,7 @@ from astropy.utils.data import (
     get_pkg_data_filename,
     import_download_cache,
     get_free_space_in_dir,
+    usable_hash_algorithms,
     check_free_space_in_dir,
     _get_download_cache_locs,
     download_files_in_parallel,
@@ -483,12 +485,13 @@ def test_url_nocache():
         assert page.read().find("Astropy") > -1
 
 
+@pytest.mark.remote_data(source="astropy")
 def test_find_by_hash(valid_urls, temp_cache):
     testurl, contents = next(valid_urls)
-    with get_readable_fileobj(testurl, encoding="binary", cache=True) as page:
-        hash = hashlib.md5(page.read())
+    p = download_file(testurl, cache=True)
+    hash = compute_hash(p)
 
-    hashstr = "hash/" + hash.hexdigest()
+    hashstr = "hash/" + hash
 
     fnout = get_pkg_data_filename(hashstr)
     assert os.path.isfile(fnout)
@@ -620,7 +623,7 @@ def test_compute_hash(tmpdir):
         ntf.flush()
 
     chhash = compute_hash(filename)
-    shash = hashlib.md5(rands).hexdigest()
+    shash = hashlib.new(conf.hash_algorithm, rands).hexdigest()
 
     assert chhash == shash
 
@@ -1042,6 +1045,32 @@ def test_check_download_cache_finds_bogus_hashes(temp_cache, valid_urls):
     clear_download_cache()
 
 
+def test_mixed_hash_algorithms(temp_cache, valid_urls):
+    hash_algorithm = Conf.hash_algorithm
+    urls = []
+    cache_should_contain = {}
+    ha = sorted(usable_hash_algorithms)
+    for a in ha:
+        with hash_algorithm.set_temp(a):
+            u, _ = next(valid_urls)
+            r = download_file(u, cache=True)
+            cache_should_contain[u] = r
+            urls.append((u, r, a, "md5" if a == "sha512" else "sha512"))
+    assert cache_contents() == cache_should_contain
+    for (u, r, a, a2) in urls:
+        assert a2 != a
+        with hash_algorithm.set_temp(a2):
+            r2 = download_file(u, cache=True, update_cache=True)
+            assert r2 != r
+    # set_temp's teardown will exercise check_cache
+
+
+def test_download_cache_update_doesnt_damage_cache(temp_cache, valid_urls):
+    u, _ = next(valid_urls)
+    download_file(u, cache=True)
+    download_file(u, cache=True, update_cache=True)
+
+
 def test_cache_dir_is_actually_a_file(tmpdir, valid_urls):
     def check_quietly_ignores_bogus_cache():
         with catch_warnings(CacheMissingWarning) as w:
@@ -1103,6 +1132,13 @@ def test_cache_dir_is_actually_a_file(tmpdir, valid_urls):
     cd = str(tmpdir / "astropy" / "download" / py_version)
     with open(cd, "w") as f:
         f.write(ct)
+    with paths.set_temp_cache(tmpdir):
+        check_quietly_ignores_bogus_cache()
+    assert get_file_contents(cd) == ct
+    os.remove(cd)
+
+    cd = str(tmpdir / "astropy" / "download" / py_version / "urlmap")
+    os.makedirs(cd)
     with paths.set_temp_cache(tmpdir):
         check_quietly_ignores_bogus_cache()
     assert get_file_contents(cd) == ct

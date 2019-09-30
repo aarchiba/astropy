@@ -45,6 +45,7 @@ __all__ = [
     'check_download_cache',
     'clear_download_cache',
     'compute_hash',
+    'usable_hash_algorithms',
     'get_free_space_in_dir',
     'check_free_space_in_dir',
     'get_file_contents',
@@ -52,6 +53,19 @@ __all__ = [
 ]
 
 _dataurls_to_alias = {}
+
+
+def _hash_ok(a):
+    try:
+        hashlib.new(a, b"test").hexdigest()
+        return True
+    except TypeError:
+        return False
+
+
+usable_hash_algorithms = {a for a in hashlib.algorithms_available
+                          if _hash_ok(a)}
+"""The cryptographic hash algorithms that can be used for deduplication."""
 
 
 class Conf(_config.ConfigNamespace):
@@ -71,7 +85,11 @@ class Conf(_config.ConfigNamespace):
         aliases=['astropy.coordinates.name_resolve.name_resolve_timeout'])
     compute_hash_block_size = _config.ConfigItem(
         2 ** 16,  # 64K
-        'Block size for computing MD5 file hashes.')
+        'Block size for computing file hashes.')
+    hash_algorithm = _config.ConfigItem(
+        'sha224',
+        'Algorithm to use for computing file hashes. Must be supported '
+        'by hashlib.')
     download_block_size = _config.ConfigItem(
         2 ** 16,  # 64K
         'Number of bytes of remote data to download per step.')
@@ -810,7 +828,7 @@ def get_pkg_data_fileobjs(datadir, package=None, pattern='*', encoding=None):
             yield fd
 
 
-def compute_hash(localfn):
+def compute_hash(localfn, hash_algorithm=None):
     """ Computes the MD5 hash for a file.
 
     The hash for a data file is used for looking up data files in a unique
@@ -828,17 +846,20 @@ def compute_hash(localfn):
     ----------
     localfn : str
         The path to the file for which the hash should be generated.
+    hash_algorithm : str, optional
+        The algorithm to use for the hash. Default is set in the config
+        file.
 
     Returns
     -------
-    md5hash : str
-        The hex digest of the MD5 hash for the contents of the ``localfn``
-        file.
-
+    hash : str
+        The hex digest of the cryptographic hash for the contents of the
+        ``localfn`` file.
     """
-
+    if hash_algorithm is None:
+        hash_algorithm = conf.hash_algorithm
     with open(localfn, 'rb') as f:
-        h = hashlib.md5()
+        h = hashlib.new(hash_algorithm)
         block = f.read(conf.compute_hash_block_size)
         while block:
             h.update(block)
@@ -1047,7 +1068,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
         try:
             with urllib.request.urlopen(source_url, timeout=timeout) as remote:
                 # keep a hash to rename the local file to the hashed name
-                hash = hashlib.md5()
+                hash = hashlib.new(conf.hash_algorithm)
 
                 info = remote.info()
                 try:
@@ -1088,7 +1109,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
                                 raise urllib.error.ContentTooShortError(
                                     "Downloaded file appears incomplete: "
                                     "claimed size is {} but we obtained {} bytes.",
-                                    content = b"")
+                                    content=b"")
                         except BaseException:
                             if os.path.exists(f.name):
                                 os.remove(f.name)
@@ -1635,22 +1656,28 @@ def check_download_cache(check_hashes=False):
                 pass
             d, hexdigest = os.path.split(h)
             if dldir != d:
-                msg = "Expected downloaded files to be in '{}' but " +\
-                      "URL '{}' points to file '{}'".format(
-                              dldir, u, h)
+                msg = ("Expected downloaded files to be in '{}' but "
+                       "URL '{}' points to file '{}'"
+                       .format(dldir, u, h))
                 raise CacheDamaged(msg, bad_url=u)
             if check_hashes:
-                hexdigest_file = compute_hash(h)
-                if hexdigest_file != hexdigest:
-                    msg = "File corresponding to {} has contents that " +\
-                          "do not match the hash value: should be '{}' " +\
-                          "but is '{}'".format(
-                                  u, hexdigest, hexdigest_file)
+                algorithms = usable_hash_algorithms.copy()
+                algorithms.remove(conf.hash_algorithm)
+                algorithms = [conf.hash_algorithm] + list(algorithms)
+                for a in algorithms:
+                    hexdigest_file = compute_hash(h, a)
+                    if hexdigest_file == hexdigest:
+                        break
+                else:
+                    msg = ("File corresponding to {} has contents that "
+                           "do not match the hash value: '{}' "
+                           .format(u, hexdigest))
                     raise CacheDamaged(msg, bad_file=h)
         for h in leftover_files:
             h_base = os.path.basename(h)
-            if len(h_base) == 2*hashlib.md5().digest_size and re.match("[0-9a-f]+", h_base):
-                raise CacheDamaged("Apparently abandoned hash file {}".format(h), bad_file=h)
+            if len(h_base) >= 32 and re.match("[0-9a-f]+", h_base):
+                raise CacheDamaged("Apparently abandoned hash file {}"
+                                   .format(h), bad_file=h)
     return leftover_files
 
 
@@ -1671,7 +1698,7 @@ def _import_to_cache(url_key, filename,
                 os.remove(filename)
             # Update file modification time.
             try:
-                with open(local_path, "w+b"):
+                with open(local_path, "ab"):
                     pass
             except OSError:
                 pass
@@ -1679,9 +1706,10 @@ def _import_to_cache(url_key, filename,
             shutil.move(filename, local_path)
         else:
             shutil.copy(filename, local_path)
-        old_hash = url2hash.pop(url_key, None)
+        old_hash = url2hash.get(url_key, None)
+        url2hash[url_key] = local_path
         if old_hash is not None:
-            if hash not in url2hash.values():
+            if old_hash not in url2hash.values():
                 try:
                     os.remove(os.path.join(dldir, old_hash))
                 except OSError as e:
@@ -1689,7 +1717,6 @@ def _import_to_cache(url_key, filename,
                          "contents of {} because of: {}"
                          .format(url_key, e),
                          AstropyWarning)
-        url2hash[url_key] = local_path
         return url2hash[url_key]
 
 
@@ -1789,7 +1816,7 @@ def import_download_cache(filename_or_obj, urls=None, update_cache=False):
             v = index[k]
             f_temp_name = os.path.join(d, str(i))
             with z.open(v) as f_zip, open(f_temp_name, "wb") as f_temp:
-                hash = hashlib.md5()
+                hash = hashlib.new(conf.hash_algorithm)
                 block = f_zip.read(block_size)
                 while block:
                     f_temp.write(block)
