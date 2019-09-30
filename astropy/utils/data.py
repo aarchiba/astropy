@@ -919,19 +919,13 @@ def get_free_space_in_dir(path):
         The amount of free space on the partition that the directory
         is on.
     """
-
-    if sys.platform.startswith('win'):
-        import ctypes
-        free_bytes = ctypes.c_ulonglong(0)
-        retval = ctypes.windll.kernel32.GetDiskFreeSpaceExW(
-                ctypes.c_wchar_p(str(path)), None, None, ctypes.pointer(free_bytes))
-        if retval == 0:
-            raise OSError('Checking free space on {!r} failed '
-                          'unexpectedly.'.format(path))
-        return free_bytes.value
-    else:
-        stat = os.statvfs(path)
-        return stat.f_bavail * stat.f_frsize
+    if not os.path.isdir(path):
+        raise OSError(
+            "Can only determine free space associated with directories, "
+            "not files.")
+        # Actually you can on Linux but I want to avoid code that fails
+        # on Windows only.
+    return shutil.disk_usage(path).free
 
 
 def check_free_space_in_dir(path, size):
