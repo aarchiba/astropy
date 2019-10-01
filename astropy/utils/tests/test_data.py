@@ -1061,6 +1061,9 @@ def test_mixed_hash_algorithms(temp_cache, valid_urls):
         assert a2 != a
         with hash_algorithm.set_temp(a2):
             r2 = download_file(u, cache=True, update_cache=True)
+            clear_download_cache(u)
+            r3 = download_file(u, cache=True)
+            assert r2 == r3
             assert r2 != r
     # set_temp's teardown will exercise check_cache
 
