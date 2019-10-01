@@ -1141,7 +1141,6 @@ def test_cache_dir_is_actually_a_file(tmpdir, valid_urls):
     os.makedirs(cd)
     with paths.set_temp_cache(tmpdir):
         check_quietly_ignores_bogus_cache()
-    assert get_file_contents(cd) == ct
 
 
 def test_get_fileobj_str(a_file):
