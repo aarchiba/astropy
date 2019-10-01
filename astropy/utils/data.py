@@ -208,7 +208,6 @@ def get_readable_fileobj(name_or_obj, encoding=None, cache=False,
     Returns
     -------
     file : readable file-like object
-
     """
 
     # close_fds is a list of file handles created by this function
@@ -384,7 +383,6 @@ def get_file_contents(*args, **kwargs):
     -------
     content
         The content of the file (as requested by ``encoding``).
-
     """
     with get_readable_fileobj(*args, **kwargs) as f:
         return f.read()
@@ -1028,7 +1026,6 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
     Because this returns a filename, another process could run
     clear_download_cache before you actually open the file, leaving
     you with a filename that no longer points to a usable file.
-
     """
 
     from astropy.utils.console import ProgressBarOrSpinner
@@ -1328,7 +1325,6 @@ def clear_download_cache(hashorurl=None):
         a hash for the cached file that is supposed to be deleted,
         the full path to a file in the cache that should be deleted,
         or a URL that should be removed from the cache if present.
-
     """
 
     try:
@@ -1383,7 +1379,6 @@ def _get_download_cache_locs():
         The path to the data cache directory.
     shelveloc : str
         The path to the shelve object that stores the cache info.
-
     """
     from astropy.config.paths import get_cache_dir
 
@@ -1543,7 +1538,6 @@ def _cache(write=False):
     though it almost immediately opens the filename, preserving the contents
     from deletion. download_file itself also calls clear_download_cache when
     it is un update_cache mode, so this can break things as well.
-
     """
     try:
         dldir, urlmapfn = _get_download_cache_locs()

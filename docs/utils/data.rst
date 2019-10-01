@@ -188,7 +188,7 @@ connected machine is loaded with everything necessary, transport the cache
 contents to your target machine by whatever means you have available, whether
 by copying via an intermediate machine, sneakernet, or carrier pigeon. The
 cache directory itself is somewhat portable between machines of the same UNIX
-flavour; this may be sufficient if you can persuade your CI system to cache hte
+flavour; this may be sufficient if you can persuade your CI system to cache the
 directory between runs. For greater portability, though, you can simply use
 `~astropy.utils.data.export_download_cache` and
 `~astropy.utils.data.import_download_cache`, which are portable and will allow

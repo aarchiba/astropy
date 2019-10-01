@@ -833,10 +833,10 @@ class ProgressBar:
                     if (i % chunksize) == 0:
                         bar.update(i)
             else:
-                p = multiprocessing.get_context(
-                            multiprocessing_start_method
-                ).Pool(
-                    processes=(int(multiprocess) if multiprocess is not True else None))
+                ctx = multiprocessing.get_context(multiprocessing_start_method)
+                p = ctx.Pool(processes=(int(multiprocess)
+                                        if multiprocess is not True
+                                        else None))
                 for i, result in enumerate(
                     p.imap_unordered(function, items, chunksize=chunksize)
                 ):
