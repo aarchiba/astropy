@@ -209,3 +209,7 @@ Astropy normally uses, if you can anticipate exactly which files will be needed
 available somewhere else, you can request they be downloaded to the cache
 using `~astropy.utils.data.download_file` with the ``sources`` argument set
 to locations you know do work.
+
+If you have a particular URL that is giving you trouble, you can download it
+using some other tool (for example ``wget``), possibly on another machine, and
+then use `import_to_cache`.

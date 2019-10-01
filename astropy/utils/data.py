@@ -1132,9 +1132,9 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
             from errors[sources[0]]
 
     if cache:
-        local_path = _import_to_cache(url_key, f.name,
-                                      hexdigest=hash.hexdigest(),
-                                      remove_original=True)
+        local_path = import_to_cache(url_key, f.name,
+                                     hexdigest=hash.hexdigest(),
+                                     remove_original=True)
     else:
         local_path = f.name
         if missing_cache:
@@ -1675,10 +1675,29 @@ def check_download_cache(check_hashes=False):
     return leftover_files
 
 
-def _import_to_cache(url_key, filename,
-                     hexdigest=None,
-                     remove_original=False):
-    """Import the on-disk file specified by filename to the cache"""
+def import_to_cache(url_key, filename,
+                    hexdigest=None,
+                    remove_original=False):
+    """Import the on-disk file specified by filename to the cache.
+
+    Parameters
+    ----------
+    url_key : str
+        The key to index the file under. This should probably be
+        the URL where the file was located, though if you obtained
+        it from a mirror you should use the URL of the primary
+        location.
+    filename : str
+        The file whose contents you want to import.
+    hexdigest : str, optional
+        The cryptographic hash of the file, as computed by
+        `compute_hash`. If it is not provided, `compute_hash`
+        will be called. This argument is available in case
+        it is easier to compute the hash progressively as
+        the file is downloaded.
+    remove_original : bool
+        Whether to remove the original file once import is complete.
+    """
     if hexdigest is None:
         hexdigest = compute_hash(filename)
     with _cache(write=True) as (dldir, url2hash):
@@ -1817,6 +1836,6 @@ def import_download_cache(filename_or_obj, urls=None, update_cache=False):
                     hash.update(block)
                     block = f_zip.read(block_size)
                 hexdigest = hash.hexdigest()
-            _import_to_cache(k, f_temp_name,
-                             hexdigest=hexdigest,
-                             remove_original=True)
+            import_to_cache(k, f_temp_name,
+                            hexdigest=hexdigest,
+                            remove_original=True)
