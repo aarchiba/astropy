@@ -1055,7 +1055,7 @@ def test_mixed_hash_algorithms(temp_cache, valid_urls):
             u, _ = next(valid_urls)
             r = download_file(u, cache=True)
             cache_should_contain[u] = r
-            urls.append((u, r, a, "md5" if a == "sha512" else "sha512"))
+            urls.append((u, r, a, "sha512" if a == "md5" else "md5"))
     assert cache_contents() == cache_should_contain
     for (u, r, a, a2) in urls:
         assert a2 != a
