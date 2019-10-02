@@ -45,7 +45,6 @@ __all__ = [
     'check_download_cache',
     'clear_download_cache',
     'compute_hash',
-    'usable_hash_algorithms',
     'get_free_space_in_dir',
     'check_free_space_in_dir',
     'get_file_contents',
@@ -53,19 +52,6 @@ __all__ = [
 ]
 
 _dataurls_to_alias = {}
-
-
-def _hash_ok(a):
-    try:
-        hashlib.new(a, b"test").hexdigest()
-        return True
-    except TypeError:
-        return False
-
-
-usable_hash_algorithms = {a for a in hashlib.algorithms_available
-                          if _hash_ok(a)}
-"""The cryptographic hash algorithms that can be used for deduplication."""
 
 
 class Conf(_config.ConfigNamespace):
@@ -86,10 +72,6 @@ class Conf(_config.ConfigNamespace):
     compute_hash_block_size = _config.ConfigItem(
         2 ** 16,  # 64K
         'Block size for computing file hashes.')
-    hash_algorithm = _config.ConfigItem(
-        'sha224',
-        'Algorithm to use for computing file hashes. Must be supported '
-        'by hashlib.')
     download_block_size = _config.ConfigItem(
         2 ** 16,  # 64K
         'Number of bytes of remote data to download per step.')
@@ -826,7 +808,7 @@ def get_pkg_data_fileobjs(datadir, package=None, pattern='*', encoding=None):
             yield fd
 
 
-def compute_hash(localfn, hash_algorithm=None):
+def compute_hash(localfn):
     """ Computes the MD5 hash for a file.
 
     The hash for a data file is used for looking up data files in a unique
@@ -854,10 +836,8 @@ def compute_hash(localfn, hash_algorithm=None):
         The hex digest of the cryptographic hash for the contents of the
         ``localfn`` file.
     """
-    if hash_algorithm is None:
-        hash_algorithm = conf.hash_algorithm
     with open(localfn, 'rb') as f:
-        h = hashlib.new(hash_algorithm)
+        h = hashlib.md5()
         block = f.read(conf.compute_hash_block_size)
         while block:
             h.update(block)
@@ -1065,7 +1045,7 @@ def download_file(remote_url, cache=False, show_progress=True, timeout=None,
         try:
             with urllib.request.urlopen(source_url, timeout=timeout) as remote:
                 # keep a hash to rename the local file to the hashed name
-                hash = hashlib.new(conf.hash_algorithm)
+                hash = hashlib.md5()
 
                 info = remote.info()
                 try:
@@ -1655,14 +1635,8 @@ def check_download_cache(check_hashes=False):
                        .format(dldir, u, h))
                 raise CacheDamaged(msg, bad_url=u)
             if check_hashes:
-                algorithms = usable_hash_algorithms.copy()
-                algorithms.remove(conf.hash_algorithm)
-                algorithms = [conf.hash_algorithm] + list(algorithms)
-                for a in algorithms:
-                    hexdigest_file = compute_hash(h, a)
-                    if hexdigest_file == hexdigest:
-                        break
-                else:
+                hexdigest_file = compute_hash(h)
+                if hexdigest_file != hexdigest:
                     msg = ("File corresponding to {} has contents that "
                            "do not match the hash value: '{}' "
                            .format(u, hexdigest))
@@ -1829,7 +1803,7 @@ def import_download_cache(filename_or_obj, urls=None, update_cache=False):
             v = index[k]
             f_temp_name = os.path.join(d, str(i))
             with z.open(v) as f_zip, open(f_temp_name, "wb") as f_temp:
-                hash = hashlib.new(conf.hash_algorithm)
+                hash = hashlib.md5()
                 block = f_zip.read(block_size)
                 while block:
                     f_temp.write(block)

@@ -43,7 +43,6 @@ from astropy.utils.data import (
     get_pkg_data_filename,
     import_download_cache,
     get_free_space_in_dir,
-    usable_hash_algorithms,
     check_free_space_in_dir,
     _get_download_cache_locs,
     download_files_in_parallel,
@@ -623,7 +622,7 @@ def test_compute_hash(tmpdir):
         ntf.flush()
 
     chhash = compute_hash(filename)
-    shash = hashlib.new(conf.hash_algorithm, rands).hexdigest()
+    shash = hashlib.md5(rands).hexdigest()
 
     assert chhash == shash
 
@@ -1043,27 +1042,6 @@ def test_check_download_cache_finds_bogus_hashes(temp_cache, valid_urls):
     with pytest.raises(ValueError):
         check_download_cache(check_hashes=True)
     clear_download_cache()
-
-
-def test_mixed_hash_algorithms(temp_cache, valid_urls):
-    hash_algorithm = Conf.hash_algorithm
-    urls = []
-    cache_should_contain = {}
-    a = 'md5'
-    with hash_algorithm.set_temp(a):
-        u, _ = next(valid_urls)
-        r = download_file(u, cache=True)
-        cache_should_contain[u] = r
-        urls.append((u, r))
-    assert cache_contents() == cache_should_contain
-    a2 = "sha512"
-    with hash_algorithm.set_temp(a2):
-        r2 = download_file(u, cache=True, update_cache=True)
-        clear_download_cache(u)
-        r3 = download_file(u, cache=True)
-        assert r2 == r3
-        assert r2 != r, "{}, {}".format(a,a2)
-    # set_temp's teardown will exercise check_cache
 
 
 def test_download_cache_update_doesnt_damage_cache(temp_cache, valid_urls):
