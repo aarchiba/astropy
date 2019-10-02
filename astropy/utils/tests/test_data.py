@@ -1049,22 +1049,20 @@ def test_mixed_hash_algorithms(temp_cache, valid_urls):
     hash_algorithm = Conf.hash_algorithm
     urls = []
     cache_should_contain = {}
-    ha = sorted(usable_hash_algorithms)
-    for a in ha:
-        with hash_algorithm.set_temp(a):
-            u, _ = next(valid_urls)
-            r = download_file(u, cache=True)
-            cache_should_contain[u] = r
-            urls.append((u, r, a, "sha512" if a == "md5" else "md5"))
+    a = 'md5'
+    with hash_algorithm.set_temp(a):
+        u, _ = next(valid_urls)
+        r = download_file(u, cache=True)
+        cache_should_contain[u] = r
+        urls.append((u, r))
     assert cache_contents() == cache_should_contain
-    for (u, r, a, a2) in urls:
-        assert a2 != a
-        with hash_algorithm.set_temp(a2):
-            r2 = download_file(u, cache=True, update_cache=True)
-            clear_download_cache(u)
-            r3 = download_file(u, cache=True)
-            assert r2 == r3
-            assert r2 != r, "{}, {}".format(a,a2)
+    a2 = "sha512"
+    with hash_algorithm.set_temp(a2):
+        r2 = download_file(u, cache=True, update_cache=True)
+        clear_download_cache(u)
+        r3 = download_file(u, cache=True)
+        assert r2 == r3
+        assert r2 != r, "{}, {}".format(a,a2)
     # set_temp's teardown will exercise check_cache
 
 
